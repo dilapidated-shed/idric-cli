@@ -13,7 +13,7 @@ Stack Overflow is one site on the Stack Exchange API. The API is network-wide; c
 - `SOURCES.tsv` — canonical public documentation URLs and why each matters.
 - `SURFACE.md` — annotated reading of the documented contracts and the first useful read-side surface.
 - `DOCUMENTED_SURFACE.tsv` — compact factual dump of the endpoints and query shapes relevant to corpus work.
-- `mirror` — reproducible raw-document mirror command. It downloads the URLs in `SOURCES.tsv`, records hashes, and does not rewrite their contents.
+- `mirror-docs` — reproducible raw-document mirror command. It downloads the URLs in `SOURCES.tsv`, records hashes, and does not rewrite their contents.
 
 The raw mirror is intentionally generated rather than copied into these notes. The notes should remain readable when the upstream HTML layout changes.
 
