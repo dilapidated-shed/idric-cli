@@ -1,0 +1,23 @@
+name	kind	url	comment
+overview	docs	https://api.stackexchange.com/docs	API v2.3 overview and method index
+questions	docs	https://api.stackexchange.com/docs/questions	Main corpus endpoint; date, vote and tag constraints
+question-type	docs	https://api.stackexchange.com/docs/types/question	Question fields including score, counts, dates, tags and body
+search	docs	https://api.stackexchange.com/docs/search	Limited question search; tagged semantics differ from /questions
+advanced-search	docs	https://api.stackexchange.com/docs/advanced-search	Broader question criteria including accepted, answers, body, title, views and tags
+no-answers	docs	https://api.stackexchange.com/docs/no-answer-questions	Questions with exactly zero answers
+unanswered	docs	https://api.stackexchange.com/docs/unanswered-questions	Site-defined unanswered set; distinct from zero answers
+tags	docs	https://api.stackexchange.com/docs/tags	Tag inventory and popularity/activity/name sorts
+sites	docs	https://api.stackexchange.com/docs/sites	Network site discovery and api_site_parameter values
+info	docs	https://api.stackexchange.com/docs/info	Per-site statistics and related-site metadata
+wrapper	docs	https://api.stackexchange.com/docs/wrapper	Common response envelope, has_more, quota and backoff
+paging	docs	https://api.stackexchange.com/docs/paging	page/pagesize and has_more contract
+filters	docs	https://api.stackexchange.com/docs/filters	Response field selection; built-in withbody and total filters
+dates	docs	https://api.stackexchange.com/docs/dates	Unix epoch date contract
+throttle	docs	https://api.stackexchange.com/docs/throttle	Daily quota, concurrent-request and dynamic backoff rules
+error-handling	docs	https://api.stackexchange.com/docs/error-handling	Method error envelope and error identifiers
+errors	docs	https://api.stackexchange.com/docs/errors	Introspect documented API errors
+compression	docs	https://api.stackexchange.com/docs/compression	Required gzip/deflate response handling
+authentication	docs	https://api.stackexchange.com/docs/authentication	OAuth flows and authenticated-user methods
+duplicate-requests	docs	https://api.stackexchange.com/docs/duplicate-requests	request_id duplicate suppression for retries
+change-log	docs	https://api.stackexchange.com/docs/change-log	Version 2.3 changes
+terms	policy	https://stackexchange.com/legal/terms-of-service/public	Public terms; keep separate from technical API notes
