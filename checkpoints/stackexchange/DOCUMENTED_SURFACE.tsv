@@ -1,0 +1,52 @@
+section	method	route	auth	important_parameters	comment
+general	GET	/2.3/{method}	varies	key;site;filter	API v2.3; per-site methods normally require site
+questions	GET	/2.3/questions	public	fromdate;todate;sort;min;max;tagged;page;pagesize;filter;key;site	Main historical question corpus
+questions	GET	/2.3/questions/{ids}	public	ids;filter;key;site	Fetch known question ids; ids vector capped at 100
+questions	GET	/2.3/questions/{ids}/answers	public	ids;page;pagesize;filter;key;site	Answers for known questions
+questions	GET	/2.3/questions/{ids}/comments	public	ids;page;pagesize;filter;key;site	Comments for known questions
+questions	GET	/2.3/questions/{ids}/linked	public	ids;page;pagesize;filter;key;site	Questions linking to known questions
+questions	GET	/2.3/questions/{ids}/related	public	ids;page;pagesize;filter;key;site	Related questions
+questions	GET	/2.3/questions/{ids}/timeline	public	ids;page;pagesize;filter;key;site	Question timelines
+questions	GET	/2.3/questions/no-answers	public	fromdate;todate;sort;min;max;tagged;page;pagesize;filter;key;site	Exactly zero answers
+questions	GET	/2.3/questions/unanswered	public	fromdate;todate;sort;min;max;tagged;page;pagesize;filter;key;site	Site-defined unanswered set
+questions	GET	/2.3/questions/featured	public	fromdate;todate;sort;min;max;tagged;page;pagesize;filter;key;site	Questions with active bounties
+search	GET	/2.3/search	public	tagged;nottagged;intitle;fromdate;todate;sort;min;max;page;pagesize;filter;key;site	Limited search; tagged is OR rather than /questions AND
+search	GET	/2.3/search/advanced	public	q;accepted;answers;body;closed;migrated;notice;nottagged;tagged;title;user;url;views;wiki;fromdate;todate;sort;min;max;page;pagesize;filter;key;site	Broad question search
+search	GET	/2.3/similar	public	title;tagged;nottagged;fromdate;todate;sort;min;max;page;pagesize;filter;key;site	Title-similarity search
+search	GET	/2.3/search/excerpts	public	q;accepted;answers;body;closed;migrated;notice;nottagged;tagged;title;user;url;views;wiki	Search returning excerpts
+tags	GET	/2.3/tags	public	inname;fromdate;todate;sort;min;max;page;pagesize;filter;key;site	Tag inventory
+tags	GET	/2.3/tags/{tags}/info	public	tags;filter;key;site	Known-tag metadata
+tags	GET	/2.3/tags/synonyms	public	fromdate;todate;sort;min;max;page;pagesize;filter;key;site	All tag synonyms
+tags	GET	/2.3/tags/{tags}/faq	public	tags;page;pagesize;filter;key;site	Frequently asked questions for tags
+tags	GET	/2.3/tags/{tags}/related	public	tags;page;pagesize;filter;key;site	Related tags
+tags	GET	/2.3/tags/{tags}/synonyms	public	tags;page;pagesize;filter;key;site	Synonyms for tags
+tags	GET	/2.3/tags/{tags}/wikis	public	tags;filter;key;site	Tag wiki entries
+posts	GET	/2.3/posts	public	fromdate;todate;sort;min;max;page;pagesize;filter;key;site	Questions and answers together
+posts	GET	/2.3/posts/{ids}	public	ids;filter;key;site	Known post ids when type is unknown
+posts	GET	/2.3/posts/{ids}/comments	public	ids;page;pagesize;filter;key;site	Comments on known posts
+posts	GET	/2.3/posts/{ids}/revisions	public	ids;page;pagesize;filter;key;site	Revision history
+answers	GET	/2.3/answers	public	fromdate;todate;sort;min;max;page;pagesize;filter;key;site	All answers on one site
+answers	GET	/2.3/answers/{ids}	public	ids;filter;key;site	Known answers
+answers	GET	/2.3/answers/{ids}/comments	public	ids;page;pagesize;filter;key;site	Comments on answers
+answers	GET	/2.3/answers/{ids}/questions	public	ids;filter;key;site	Questions owning known answers
+comments	GET	/2.3/comments	public	fromdate;todate;sort;min;max;page;pagesize;filter;key;site	All comments on a site
+comments	GET	/2.3/comments/{ids}	public	ids;filter;key;site	Known comments
+users	GET	/2.3/users	public	inname;fromdate;todate;sort;min;max;page;pagesize;filter;key;site	Site users
+users	GET	/2.3/users/{ids}	public	ids;filter;key;site	Known users
+users	GET	/2.3/users/{ids}/questions	public	ids;fromdate;todate;sort;min;max;page;pagesize;filter;key;site	Questions asked by users
+users	GET	/2.3/users/{ids}/answers	public	ids;fromdate;todate;sort;min;max;page;pagesize;filter;key;site	Answers posted by users
+users	GET	/2.3/users/{ids}/tags	public	ids;page;pagesize;filter;key;site	Tags in which users were active
+users	GET	/2.3/users/{id}/top-question-tags	public	id;filter;key;site	Top question tags for one user
+users	GET	/2.3/users/{id}/top-answer-tags	public	id;filter;key;site	Top answer tags for one user
+site	GET	/2.3/info	public	filter;key;site	Per-site statistics; aggressively cached
+network	GET	/2.3/sites	public	page;pagesize;filter;key	Discover sites; no site parameter
+network	GET	/2.3/errors	public	page;pagesize;filter;key	Introspect API error catalog
+network	GET	/2.3/errors/{id}	public	id;filter;key	Simulate a documented error for testing
+network	POST	/2.3/filters/create	public	include;exclude;base;unsafe	Create immutable response filter
+network	GET	/2.3/filters/{filters}	public	filters	Decode filters for debugging
+wrapper	N/A	common response wrapper	N/A	items;has_more;page;page_size;quota_max;quota_remaining;backoff;error_id;error_name;error_message;total	Shared response envelope
+paging	N/A	list methods	N/A	page;pagesize	Page starts at 1; normal max pagesize 100; follow has_more
+dates	N/A	methods with date constraints	N/A	fromdate;todate;min;max	Wire dates are whole Unix epoch seconds UTC
+throttle	N/A	all methods	N/A	backoff;quota_remaining	Any method can demand backoff
+transport	N/A	all responses	N/A	Accept-Encoding;Content-Encoding	Normal responses are compressed gzip or deflate
+retry	N/A	all requests	N/A	request_id	Duplicate request ids rejected for at least a short documented window
