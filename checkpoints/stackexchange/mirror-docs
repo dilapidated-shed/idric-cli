@@ -1,0 +1,82 @@
+#!/usr/bin/env grease
+
+set -eu
+
+TAB=$(printf '\t')
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SOURCES="$HERE/SOURCES.tsv"
+OUT_ROOT=${1:-"$HERE/mirror"}
+STAMP=$(date -u '+%Y-%m-%dT%H%M%SZ')
+FINAL="$OUT_ROOT/$STAMP"
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || {
+    printf 'mirror-docs: required command not found: %s\n' "$1" >&2
+    exit 127
+  }
+}
+
+for dependency in curl sha256sum cut date mktemp mkdir mv rm tail; do
+  need "$dependency"
+done
+
+test -f "$SOURCES" || {
+  printf 'mirror-docs: source manifest not found: %s\n' "$SOURCES" >&2
+  exit 2
+}
+
+mkdir -p "$OUT_ROOT"
+
+test ! -e "$FINAL" || {
+  printf 'mirror-docs: snapshot already exists: %s\n' "$FINAL" >&2
+  exit 2
+}
+
+TMP=$(mktemp -d "$OUT_ROOT/.tmp.XXXXXX")
+
+cleanup() {
+  if test -n "${TMP:-}" && test -d "$TMP"; then
+    rm -rf "$TMP"
+  fi
+}
+trap cleanup EXIT HUP INT TERM
+
+MANIFEST="$TMP/manifest.tsv"
+printf 'name\tkind\turl\tsha256\tbody_file\theaders_file\n' > "$MANIFEST"
+
+tail -n +2 "$SOURCES" |
+while IFS="$TAB" read -r name kind url comment; do
+  test -n "$name" || continue
+  test -n "$url" || continue
+
+  body="$TMP/$name.html"
+  headers="$TMP/$name.headers"
+
+  printf 'fetch\t%s\t%s\n' "$name" "$url"
+
+  curl \
+    --fail-with-body \
+    --location \
+    --compressed \
+    --silent \
+    --show-error \
+    --user-agent 'idric-cli-stackexchange-doc-mirror/1' \
+    --dump-header "$headers" \
+    --output "$body" \
+    "$url"
+
+  sha=$(sha256sum "$body" | cut -d ' ' -f 1)
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$name" \
+    "$kind" \
+    "$url" \
+    "$sha" \
+    "$name.html" \
+    "$name.headers" >> "$MANIFEST"
+done
+
+mv "$TMP" "$FINAL"
+TMP=
+
+printf 'snapshot\t%s\n' "$FINAL"
