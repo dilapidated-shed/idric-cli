@@ -1,0 +1,15 @@
+{
+  "apiVersion": "2.2.19",
+  "industries": [
+    {
+      "industryID": 2,
+      "industryName": "Engineering",
+      "industrySlug": "engineering"
+    }
+  ],
+  "appliedFilters": {
+    "get": "industries"
+  },
+  "statusCode": 200,
+  "success": true
+}

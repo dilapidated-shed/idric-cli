@@ -1,0 +1,369 @@
+module Jobicy.Run
+
+import Data.List
+import Data.List1
+import Data.Maybe
+import Data.Text
+import Language.JSON
+import Network.HTTP
+import Network.URL
+import Response
+import System
+import System.Directory
+import System.File
+import Jobicy.Protocol
+
+-- All I/O paths return external failure rather than promising termination.
+%default covering
+
+provider_endpoint : Text
+provider_endpoint = "https://jobicy.com/api/v2/remote-jobs"
+
+usage : Text
+usage = "jobicy 0.1.0\nCommands: help, version, doctor, locations, industries, url, search, status, fixture\n  jobicy search [--count 20] [--geo usa] [--industry engineering] [--tag mathematics]\n  jobicy search --geo usa --all [--max-pages 100]\n  jobicy status ID [ID ...] [--format tsv|jsonl]\n  jobicy fixture FILE [--format tsv|jsonl]\n  jobicy locations|industries [--format tsv|jsonl]\n  jobicy url [search options]\nOptions: --format tsv|jsonl, --cursor TOKEN, --evidence-dir EXISTING_DIRECTORY\nAutomated search: --sync --evidence-dir DIRECTORY; persistent one-hour start guard.\n--all makes at most 100 sequential requests by default, configurable from 1 to 1000.\nThe public feed spans seven recent days with a publication delay; it is not a job census.\nTSV escapes backslash, tab, CR, LF and control characters reversibly; descriptions remain complete."
+
+fail : Problem → IO a
+fail problem = do
+  _ ← fPutStrLn stderr ("jobicy: " ++ problem.message)
+  case problem.code of
+    2 ⇒ exitWith (ExitFailure 2)
+    4 ⇒ exitWith (ExitFailure 4)
+    5 ⇒ exitWith (ExitFailure 5)
+    6 ⇒ exitWith (ExitFailure 6)
+    7 ⇒ exitWith (ExitFailure 7)
+    8 ⇒ exitWith (ExitFailure 8)
+    9 ⇒ exitWith (ExitFailure 9)
+    _ ⇒ exitFailure
+
+leap_year : Integer → Bool
+leap_year year = year `mod` 4 ≟ 0 && (not (year `mod` 100 ≟ 0) || year `mod` 400 ≟ 0)
+
+year_and_day : Integer → Integer → (Integer, Integer)
+year_and_day year days =
+  let size = if leap_year year then 366 else 365 in
+  if days < size then (year, days) else year_and_day (year + 1) (days - size)
+
+month_and_day : Integer → Integer → List Integer → (Integer, Integer)
+month_and_day month days [] = (month, days + 1)
+month_and_day month days (size :: rest) =
+  if days < size then (month, days + 1) else month_and_day (month + 1) (days - size) rest
+
+two_digits : Integer → Text
+two_digits value = (if value < 10 then "0" else "") ++ show value
+
+timestamp : IO Text
+timestamp = do
+  seconds ← time
+  let (year, days) = year_and_day 1970 (seconds `div` 86400)
+  let (month, day) = month_and_day 1 days [31, if leap_year year then 29 else 28,31,30,31,30,31,31,30,31,30,31]
+  let within_day = seconds `mod` 86400
+  pure (show year ++ "-" ++ two_digits month ++ "-" ++ two_digits day ++ "T" ++
+    two_digits (within_day `div` 3600) ++ ":" ++ two_digits ((within_day `div` 60) `mod` 60) ++ ":" ++ two_digits (within_day `mod` 60) ++ "Z")
+
+endpoint : IO (Either Problem (Text, Text))
+endpoint = do
+  override ← getEnv "JOBICY_TEST_ENDPOINT"
+  token ← getEnv "JOBICY_TEST_MODE"
+  case override of
+    Nothing ⇒ pure (Right (provider_endpoint, "live-provider"))
+    Just value ⇒ pure (if isPrefixOf "http://127.0.0.1:" value && isSuffixOf "/api/v2/remote-jobs" value && token ≟ Just "synthetic"
+      then Right (value, "local-transport-fixture") else Left (Problem_With 2 "test endpoint requires loopback and JOBICY_TEST_MODE=synthetic"))
+
+save_text : Text → Text → IO (Either Problem ())
+save_text path value = do
+  result ← writeFile path value
+  pure (case result of Right () ⇒ Right (); Left _ ⇒ Left (Problem_With 7 ("could not write evidence: " ++ path)))
+
+prepare_evidence : Text → IO (Either Problem Text)
+prepare_evidence "" = pure (Right "")
+prepare_evidence root = do
+  seconds ← time
+  process ← getPID
+  let path = root ++ "/jobicy-" ++ show seconds ++ "-" ++ show process
+  result ← createDir path
+  pure (case result of Right () ⇒ Right path; Left _ ⇒ Left (Problem_With 7 "evidence parent must exist; refused to overwrite a run directory"))
+
+capture_response : Text → Int → Text → Text → Text → Int → Text → IO (Either Problem ())
+capture_response "" _ _ _ _ _ _ = pure (Right ())
+capture_response root index request_address provenance observed status body = do
+  let prefix = root ++ "/request-" ++ show index
+  request_result ← save_text (prefix ++ ".url") (request_address ++ "\n")
+  body_result ← save_text (prefix ++ ".json") body
+  metadata_result ← save_text (prefix ++ ".tsv") ("source\tJobicy\n" ++ "provenance\t" ++ provenance ++ "\nobservedAt\t" ++ observed ++ "\nhttp_status\t" ++ show status ++ "\n")
+  pure (request_result >> body_result >> metadata_result)
+
+record Observation where
+  constructor Observation_With
+  body : Text
+  observed : Text
+  request_url : Text
+
+fetch_url : Text → Text → Int → Text → IO (Either Problem Observation)
+fetch_url evidence provenance index destination = do
+  observed ← timestamp
+  case parse_url destination of
+    Left _ ⇒ pure (Left (Problem_With 2 "invalid request URL"))
+    Right target ⇒ do
+      result ← fetch_response (get target) []
+      case result of
+        Left message ⇒ do
+          captured ← capture_response evidence index destination provenance observed 0 ""
+          pure (captured >> Left (Problem_With 5 ("NETWORK_FAILURE: " ++ message)))
+        Right response ⇒ do
+          captured ← capture_response evidence index destination provenance observed response.status response.body
+          pure (captured >>
+            if response.status ≟ 429 then Left (Problem_With 8 "THROTTLED: HTTP 429; defer retry, do not retry in a tight loop")
+            else if response.status < 200 || response.status >= 300 then Left (Problem_With 4 ("HTTP_FAILURE: status=" ++ show response.status))
+            else Right (Observation_With response.body observed destination))
+
+record ObservedJob where
+  constructor Observed_Job
+  posting : Posting
+  observed : Text
+  request_url : Text
+  api_version : Text
+
+read_search_page : Search → Text → Either Problem Page
+read_search_page search body = do
+  document@(original, exact) ← parse_document body
+  page ← decode_page document
+  if length page.jobs <= cast search.page_size then Right () else Left (Problem_With 9 "page exceeds requested count")
+  filters ← case (field "appliedFilters" original, field "appliedFilters" exact) of
+    (Just value@(JObject _), Just precise) ⇒ Right (value, precise)
+    _ ⇒ Left (Problem_With 9 "missing appliedFilters; request meaning cannot be verified")
+  count ← bounded_integer "count" 1 200 (fst filters) (snd filters)
+  if count ≟ search.page_size then Right () else Left (Problem_With 9 "applied count differs from the request")
+  traverse_ (\(name, wanted) ⇒ do
+    observed ← optional_text name (fst filters)
+    if fromMaybe "" observed ≟ wanted then Right () else Left (Problem_With 9 ("applied filter differs from the request: " ++ name)))
+    [("geo",search.geography),("industry",search.industry),("tag",search.keyword),("cursor",search.cursor)]
+  Right page
+
+merge_observed : List ObservedJob → Observation → Page → Either Problem (List ObservedJob)
+merge_observed collected observation page = do
+  unique ← append_unique (map posting collected) page.jobs
+  let old_ids = map (identifier . posting) collected
+  Right (collected ++ map (\job ⇒ Observed_Job job observation.observed observation.request_url page.api_version)
+    (filter (\job ⇒ not (elem job.identifier old_ids)) unique))
+
+request_pages : Int → Search → Text → Text → Text → List Text → List ObservedJob → IO (Either Problem (List ObservedJob, Bool, Int))
+request_pages remaining search destination provenance evidence seen collected =
+  if remaining <= 0 then pure (Left (Problem_With 9 "PARTIAL_TRAVERSAL: page safety bound reached; complete-feed output withheld")) else do
+  let index = search.page_bound - remaining + 1
+  observation ← fetch_url evidence provenance index (search_url destination search)
+  case observation of
+    Left problem ⇒ pure (Left problem)
+    Right observation ⇒ case read_search_page search observation.body of
+      Left problem ⇒ pure (Left problem)
+      Right page ⇒ case merge_observed collected observation page of
+        Left problem ⇒ pure (Left problem)
+        Right jobs ⇒ case page.next_cursor of
+          Nothing ⇒ pure (Right (jobs, True, index))
+          Just cursor ⇒
+            if elem cursor seen || cursor ≟ search.cursor then pure (Left (Problem_With 9 "PARTIAL_TRAVERSAL: repeated cursor; complete-feed output withheld"))
+            else if not search.all_pages then pure (Right (jobs, False, index))
+            else request_pages (remaining - 1) ({cursor := cursor} search) destination provenance evidence (cursor :: seen) jobs
+
+print_jobs : Text → Text → List ObservedJob → IO ()
+print_jobs format provenance jobs = do
+  if format ≟ "tsv" then putStrLn job_header else pure ()
+  traverse_ (\job ⇒ putStrLn (render_job format provenance job.observed job.request_url job.api_version job.posting)) jobs
+
+start_synchronization : Search → IO (Either Problem ())
+start_synchronization search =
+  if not search.synchronize then pure (Right ()) else
+  if search.evidence_directory ≟ "" then pure (Left (Problem_With 2 "--sync requires an existing --evidence-dir for its persistent hourly guard")) else do
+    let lock = search.evidence_directory ++ "/synchronization-lock"
+    locked ← createDir lock
+    case locked of
+      Left _ ⇒ pure (Left (Problem_With 8 "synchronization is locked; inspect an interrupted run before retry"))
+      Right () ⇒ do
+        now ← time
+        previous ← readFile (search.evidence_directory ++ "/synchronization-start")
+        let allowed = case previous of
+              Left FileNotFound ⇒ True
+              Left _ ⇒ False
+              Right token ⇒ all isDigit (unpack (trim token)) && not (trim token ≟ "") &&
+                now - cast (trim token) >= 3600
+        saved ← if allowed then save_text (search.evidence_directory ++ "/synchronization-start") (show now ++ "\n") else pure (Left (Problem_With 8 "synchronization may start at most once per hour; guard retained"))
+        removeDir lock
+        pure saved
+
+run_search : Search → IO ()
+run_search search = do
+  target ← endpoint
+  case target of
+    Left problem ⇒ fail problem
+    Right (destination, provenance) ⇒ do
+      guarded ← start_synchronization search
+      case guarded of Left problem ⇒ fail problem; Right () ⇒ pure ()
+      prepared ← prepare_evidence search.evidence_directory
+      case prepared of
+        Left problem ⇒ fail problem
+        Right evidence ⇒ do
+          outcome ← request_pages search.page_bound search destination provenance evidence (if search.cursor ≟ "" then [] else [search.cursor]) []
+          case outcome of
+            Left problem ⇒ do
+              _ ← fPutStrLn stderr "traversal=FAILED; no complete feed or nationwide total is claimed"
+              fail problem
+            Right (jobs, complete, pages) ⇒ do
+              print_jobs search.output_format provenance jobs
+              _ ← fPutStrLn stderr ("provenance=" ++ provenance ++ "; pages=" ++ show pages ++ "; unique_jobs=" ++ show (length jobs) ++
+                "; traversal=" ++ (if complete then (if search.cursor ≟ "" then "WINDOW_EXHAUSTED" else "CONTINUATION_EXHAUSTED") else "PAGE_ONLY") ++
+                "; start=" ++ (if search.cursor ≟ "" then "FIRST_PAGE" else "CONTINUATION") ++
+                "; nationwide_total=UNKNOWN; publication_window=7_days; evidence=" ++ evidence)
+              pure ()
+
+status_records : (JSON, JSON) → Either Problem (Text, Text, List (Text, Text))
+status_records (original, exact) = do
+  version ← api_success original exact
+  checked ← nonempty_text "checkedAt" original
+  count ← bounded_integer "count" 1 100 original exact
+  values ← case (field "jobs" original, field "jobs" exact) of
+    (Just (JArray originals), Just (JArray exacts)) ⇒ Right (zip originals exacts)
+    _ ⇒ Left (Problem_With 6 "status jobs must be an array")
+  if count ≟ cast (length values) then Right () else Left (Problem_With 6 "status count does not match records")
+  rows ← traverse status_row values
+  if length (nub (map fst rows)) ≟ length rows then Right (version, checked, rows)
+    else Left (Problem_With 6 "duplicate status ID")
+  where
+    status_row : (JSON, JSON) → Either Problem (Text, Text)
+    status_row (value, precise) = do
+      identifier ← read_id "id" value precise
+      status ← nonempty_text "status" value
+      if elem status ["active", "closed", "unknown"] then Right (identifier, status)
+        else Left (Problem_With 6 "unrecognized posting status")
+
+print_status : Text → Text → Text → Text → Text → Text → List (Text, Text) → IO ()
+print_status format provenance observed request_address version checked rows = do
+  if format ≟ "tsv" then putStrLn (tsv_row ["source","provenance","id","status","checkedAt","observedAt","requestUrl","apiVersion"]) else pure ()
+  traverse_ (\(identifier, status) ⇒ putStrLn (if format ≟ "tsv"
+    then tsv_row ["Jobicy", provenance, identifier, status, checked, observed, request_address, version]
+    else "{\"source\":\"Jobicy\",\"provenance\":" ++ json_quote provenance ++ ",\"id\":" ++ identifier ++
+      ",\"status\":" ++ json_quote status ++ ",\"checkedAt\":" ++ json_quote checked ++
+      ",\"observedAt\":" ++ json_quote observed ++ ",\"requestUrl\":" ++ json_quote request_address ++ ",\"apiVersion\":" ++ json_quote version ++ "}")) rows
+
+taxonomy_records : Text → (JSON, JSON) → Either Problem (Text, List (Text, Text, Text))
+taxonomy_records kind (original, exact) = do
+  version ← api_success original exact
+  values ← case (field kind original, field kind exact) of
+    (Just (JArray originals), Just (JArray exacts)) ⇒ Right (zip originals exacts)
+    _ ⇒ Left (Problem_With 6 "taxonomy array is missing")
+  rows ← traverse row values
+  Right (version, rows)
+  where
+    row : (JSON, JSON) → Either Problem (Text, Text, Text)
+    row (value, precise) = do
+      let prefix = if kind ≟ "locations" then "geo" else "industry"
+      identifier ← read_id (prefix ++ "ID") value precise
+      name ← required_text (prefix ++ "Name") value
+      slug ← nonempty_text (prefix ++ "Slug") value
+      Right (identifier, name, slug)
+
+print_taxonomy : Text → Text → Text → Text → Text → Text → List (Text, Text, Text) → IO ()
+print_taxonomy format kind provenance observed request_address version rows = do
+  if format ≟ "tsv" then putStrLn (tsv_row ["source","provenance","taxonomy","id","name","slug","observedAt","requestUrl","apiVersion"]) else pure ()
+  traverse_ (\(identifier,name,slug) ⇒ putStrLn (if format ≟ "tsv" then tsv_row ["Jobicy",provenance,kind,identifier,name,slug,observed,request_address,version]
+    else "{\"source\":\"Jobicy\",\"provenance\":" ++ json_quote provenance ++ ",\"taxonomy\":" ++ json_quote kind ++
+      ",\"id\":" ++ identifier ++ ",\"name\":" ++ json_quote name ++ ",\"slug\":" ++ json_quote slug ++
+      ",\"observedAt\":" ++ json_quote observed ++ ",\"requestUrl\":" ++ json_quote request_address ++ ",\"apiVersion\":" ++ json_quote version ++ "}")) rows
+
+run_taxonomy : Text → Search → IO ()
+run_taxonomy kind search = do
+  target ← endpoint
+  case target of
+    Left problem ⇒ fail problem
+    Right (destination, provenance) ⇒ do
+      prepared ← prepare_evidence search.evidence_directory
+      case prepared of
+        Left problem ⇒ fail problem
+        Right evidence ⇒ do
+          observation ← fetch_url evidence provenance 1 (destination ++ "?get=" ++ kind)
+          case observation of
+            Left problem ⇒ fail problem
+            Right observation ⇒ case parse_document observation.body >>= taxonomy_records kind of
+              Left problem ⇒ fail problem
+              Right (version, rows) ⇒ print_taxonomy search.output_format kind provenance observation.observed observation.request_url version rows
+
+run_status : List Text → Search → IO ()
+run_status identifiers search =
+  if null identifiers || length identifiers > 100 || not (all positive_id identifiers)
+  then fail (Problem_With 2 "status requires 1–100 positive integer IDs, including duplicates") else do
+  target ← endpoint
+  case target of
+    Left problem ⇒ fail problem
+    Right (destination, provenance) ⇒ do
+      prepared ← prepare_evidence search.evidence_directory
+      case prepared of
+        Left problem ⇒ fail problem
+        Right evidence ⇒ do
+          observation ← fetch_url evidence provenance 1 (status_url destination identifiers)
+          case observation of
+            Left problem ⇒ fail problem
+            Right observation ⇒ case parse_document observation.body >>= status_records of
+              Left problem ⇒ fail problem
+              Right (version, checked, rows) ⇒
+                if map fst rows ≟ nub identifiers then print_status search.output_format provenance observation.observed observation.request_url version checked rows
+                else fail (Problem_With 6 "status response IDs or first-occurrence order do not match request")
+
+run_fixture : Text → Search → IO ()
+run_fixture path search = do
+  loaded ← readFile path
+  case loaded of
+    Left _ ⇒ fail (Problem_With 7 "could not read fixture file")
+    Right body ⇒ case parse_document body of
+      Left problem ⇒ fail problem
+      Right document@(original, exact) ⇒
+        if isJust (field "checkedAt" original) then case status_records document of
+          Left problem ⇒ fail problem
+          Right (version, checked, rows) ⇒ print_status search.output_format "offline-fixture" "" path version checked rows
+        else if isJust (field "locations" original) || isJust (field "industries" original) then
+          let kind = if isJust (field "locations" original) then "locations" else "industries" in
+          case taxonomy_records kind document of
+            Left problem ⇒ fail problem
+            Right (version, rows) ⇒ print_taxonomy search.output_format kind "offline-fixture" "" path version rows
+        else case decode_page document of
+          Left problem ⇒ fail problem
+          Right page ⇒ case append_unique [] page.jobs of
+            Left problem ⇒ fail problem
+            Right jobs ⇒ do
+              print_jobs search.output_format "offline-fixture" (map (\job ⇒ Observed_Job job "" path page.api_version) jobs)
+              _ ← fPutStrLn stderr ("provenance=offline-fixture; traversal=" ++ (if isNothing page.next_cursor then "FINAL_PAGE" else "PAGE_ONLY") ++ "; no live-provider evidence")
+              pure ()
+
+output_options : List Text → Either Problem Search
+output_options arguments = do
+  search ← read_options arguments
+  if search.geography ≟ "" && search.industry ≟ "" && search.keyword ≟ "" && search.cursor ≟ "" && not search.all_pages && not search.synchronize then Right search else Left (Problem_With 2 "this command accepts only output and evidence options")
+
+doctor : IO ()
+doctor = do
+  putStrLn "component\tstatus\tdetail"
+  putStrLn "provider\tPUBLIC\tJobicy API; credentials disabled"
+  putStrLn "schema\tPINNED\tOpenAPI 3.1.0, API 2.2.19"
+  putStrLn "transport\tICU\tIdric-Net request meaning; ICU socket/OpenSSL provider"
+  putStrLn "pagination\tBOUNDED\t100 pages default; maximum 1000; cursors opaque"
+  putStrLn "synchronization\tMANUAL\tno scheduled sync; --sync guards one-hour start interval"
+  putStrLn "status\tTHREE_VALUES\tactive, closed, unknown; feed absence proves neither closed nor unknown"
+  putStrLn "a1-arm32\tNOT_RUN\tphysical MIRO A1 acceptance is separate"
+  putStrLn "c67-arm64\tNOT_RUN\tphysical MIRO C67 acceptance is separate"
+
+export
+run_jobicy : IO ()
+run_jobicy = do
+  arguments ← getArgs
+  case drop 1 arguments of
+    ["help"] ⇒ putStrLn usage
+    ["--help"] ⇒ putStrLn usage
+    ["version"] ⇒ putStrLn "jobicy 0.1.0"
+    ["--version"] ⇒ putStrLn "jobicy 0.1.0"
+    ["doctor"] ⇒ doctor
+    "search" :: options ⇒ case read_options options of Left problem ⇒ fail problem; Right search ⇒ run_search search
+    "url" :: options ⇒ case read_options options of Left problem ⇒ fail problem; Right search ⇒ putStrLn (search_url provider_endpoint search)
+    "fixture" :: path :: options ⇒ case output_options options of Left problem ⇒ fail problem; Right search ⇒ run_fixture path search
+    "locations" :: options ⇒ case output_options options of Left problem ⇒ fail problem; Right search ⇒ run_taxonomy "locations" search
+    "industries" :: options ⇒ case output_options options of Left problem ⇒ fail problem; Right search ⇒ run_taxonomy "industries" search
+    "status" :: options ⇒
+      let (identifiers, following) = span (\value ⇒ not (isPrefixOf "--" value)) options in
+      case output_options following of Left problem ⇒ fail problem; Right search ⇒ run_status identifiers search
+    _ ⇒ fail (Problem_With 2 usage)

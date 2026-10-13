@@ -1,0 +1,338 @@
+module Jobicy.Protocol
+
+import Data.List
+import Data.List1
+import Data.Maybe
+import Data.Text
+import Language.JSON
+import Network.Types
+
+-- External documents are bounded and checked; inherited JSON parsing is covering.
+%default covering
+
+public export
+record Problem where
+  constructor Problem_With
+  code : Int
+  message : Text
+
+public export
+record Search where
+  constructor Search_With
+  page_size : Int
+  geography : Text
+  industry : Text
+  keyword : Text
+  cursor : Text
+  all_pages : Bool
+  page_bound : Int
+  output_format : Text
+  evidence_directory : Text
+  synchronize : Bool
+
+export
+default_search : Search
+default_search = Search_With 20 "" "" "" "" False 100 "tsv" "" False
+
+export
+field : Text → JSON → Maybe JSON
+field = Language.JSON.Data.lookup
+
+export
+required_text : Text → JSON → Either Problem Text
+required_text name document = case field name document of
+  Just (JString value) ⇒ Right value
+  _ ⇒ Left (Problem_With 6 ("missing or invalid text field: " ++ name))
+
+export
+nonempty_text : Text → JSON → Either Problem Text
+nonempty_text name document = do
+  value ← required_text name document
+  if value ≟ "" then Left (Problem_With 6 ("empty field: " ++ name)) else Right value
+
+export
+optional_text : Text → JSON → Either Problem (Maybe Text)
+optional_text name document = case field name document of
+  Nothing ⇒ Right Nothing
+  Just JNull ⇒ Right Nothing
+  Just (JString value) ⇒ Right (Just value)
+  _ ⇒ Left (Problem_With 6 ("invalid optional text field: " ++ name))
+
+export
+hex_digit : Int → Char
+hex_digit value = if value < 10 then chr (ord '0' + value) else chr (ord 'A' + value - 10)
+
+escaped_byte : Int → Text
+escaped_byte value = pack ['%', hex_digit (value `div` 16), hex_digit (value `mod` 16)]
+
+unreserved : Char → Bool
+unreserved value = (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
+  (value >= '0' && value <= '9') || elem value ['-', '.', '_', '~']
+
+encode_character : Char → Text
+encode_character value =
+  let scalar = ord value in
+  if unreserved value then singleton value
+  else if scalar < 128 then escaped_byte scalar
+  else if scalar < 2048 then escaped_byte (192 + scalar `div` 64) ++ escaped_byte (128 + scalar `mod` 64)
+  else if scalar < 65536 then escaped_byte (224 + scalar `div` 4096) ++ escaped_byte (128 + (scalar `div` 64) `mod` 64) ++ escaped_byte (128 + scalar `mod` 64)
+  else escaped_byte (240 + scalar `div` 262144) ++ escaped_byte (128 + (scalar `div` 4096) `mod` 64) ++ escaped_byte (128 + (scalar `div` 64) `mod` 64) ++ escaped_byte (128 + scalar `mod` 64)
+
+export
+percent_encode : Text → Text
+percent_encode value = concatMap encode_character (unpack value)
+
+quote_character : Char → Text
+quote_character '"' = "\\\""
+quote_character '\\' = "\\\\"
+quote_character '\n' = "\\n"
+quote_character '\r' = "\\r"
+quote_character '\t' = "\\t"
+quote_character value = if ord value < 32 then "\\u00" ++ pack [hex_digit (ord value `div` 16), hex_digit (ord value `mod` 16)] else singleton value
+
+export
+json_quote : Text → Text
+json_quote value = "\"" ++ concatMap quote_character (unpack value) ++ "\""
+
+tsv_character : Char → Text
+tsv_character '\\' = "\\\\"
+tsv_character '\n' = "\\n"
+tsv_character '\r' = "\\r"
+tsv_character '\t' = "\\t"
+tsv_character value = if ord value < 32 then "\\u00" ++ pack [hex_digit (ord value `div` 16), hex_digit (ord value `mod` 16)] else singleton value
+
+export
+tsv_row : List Text → Text
+tsv_row fields = concat (intersperse "\t" (map (concatMap tsv_character . unpack) fields))
+
+export
+json_array : List Text → Text
+json_array fields = "[" ++ concat (intersperse "," (map json_quote fields)) ++ "]"
+
+-- Preserve numeric tokens outside strings. The first parse checks the original
+-- grammar, so quoting cannot turn an invalid numeric document into a valid one.
+number_character : Char → Bool
+number_character value = isDigit value || elem value ['-', '+', '.', 'e', 'E']
+
+preserve_number_tokens : Bool → Bool → List Char → Text
+preserve_number_tokens _ _ [] = ""
+preserve_number_tokens inside escaped (value :: rest) =
+  if inside then singleton value ++ preserve_number_tokens
+    (if escaped then True else not (value ≟ '"'))
+    (not escaped && value ≟ '\\') rest
+  else if value ≟ '"' then "\"" ++ preserve_number_tokens True False rest
+  else if isDigit value || value ≟ '-' then
+    let (token, following) = span number_character (value :: rest) in
+    json_quote (pack token) ++ preserve_number_tokens False False following
+  else singleton value ++ preserve_number_tokens False False rest
+
+unique_keys : JSON → Bool
+unique_keys (JObject entries) = length (nub (map fst entries)) ≟ length entries && all (unique_keys . snd) entries
+unique_keys (JArray entries) = all unique_keys entries
+unique_keys _ = True
+
+export
+parse_document : Text → Either Problem (JSON, JSON)
+parse_document body =
+  if length body > 8388608 then Left (Problem_With 6 "response exceeds 8 MiB") else
+  case (Language.JSON.parse body, Language.JSON.parse (preserve_number_tokens False False (unpack body))) of
+    (Just original, Just exact) ⇒ if unique_keys original then Right (original, exact) else Left (Problem_With 6 "duplicate JSON field names")
+    _ ⇒ Left (Problem_With 6 "invalid JSON response")
+
+ascii_digits : Text → Bool
+ascii_digits value = not (value ≟ "") && all (\letter ⇒ letter >= '0' && letter <= '9') (unpack value)
+
+export
+positive_id : Text → Bool
+positive_id value = ascii_digits value && not (isPrefixOf "0" value) && length value <= 128
+
+export
+exact_integer : Text → JSON → JSON → Either Problem Text
+exact_integer name original exact = case (field name original, field name exact) of
+  (Just (JNumber _), Just (JString token)) ⇒
+    if ascii_digits token || (isPrefixOf "-" token && ascii_digits (substr 1 (length token) token))
+    then Right token else Left (Problem_With 6 ("nonintegral numeric field: " ++ name))
+  _ ⇒ Left (Problem_With 6 ("missing or invalid integer field: " ++ name))
+
+export
+read_id : Text → JSON → JSON → Either Problem Text
+read_id name original exact = do
+  token ← exact_integer name original exact
+  if positive_id token then Right token else Left (Problem_With 6 ("invalid positive ID: " ++ name))
+
+export
+bounded_integer : Text → Int → Int → JSON → JSON → Either Problem Int
+bounded_integer name lower upper original exact = do
+  token ← exact_integer name original exact
+  if length token > 6 then Left (Problem_With 6 ("integer out of range: " ++ name)) else
+    let value : Int = cast token in
+    if value >= lower && value <= upper then Right value else Left (Problem_With 6 ("integer out of range: " ++ name))
+
+optional_number : Text → JSON → JSON → Either Problem (Maybe Text)
+optional_number name original exact = case field name original of
+  Nothing ⇒ Right Nothing
+  Just JNull ⇒ Right Nothing
+  _ ⇒ map Just (exact_integer name original exact)
+
+export
+api_success : JSON → JSON → Either Problem Text
+api_success original exact = do
+  case field "success" original of
+    Just (JBoolean True) ⇒ Right ()
+    Just (JBoolean False) ⇒ Left (Problem_With 4 "API rejected the request; no results accepted")
+    _ ⇒ Left (Problem_With 6 "missing API success indicator")
+  _ ← bounded_integer "statusCode" 200 200 original exact
+  nonempty_text "apiVersion" original
+
+text_array : Text → JSON → Either Problem (List Text)
+text_array name document = case field name document of
+  Just (JArray values) ⇒ traverse read_text values
+  _ ⇒ Left (Problem_With 6 ("missing or invalid array: " ++ name))
+  where
+    read_text : JSON → Either Problem Text
+    read_text (JString value) = Right value
+    read_text _ = Left (Problem_With 6 ("nontext item in " ++ name))
+
+public export
+record Posting where
+  constructor Posting_With
+  identifier : Text
+  employer : Text
+  title : Text
+  geography : Text
+  employment_types : List Text
+  seniority : Text
+  industries : List Text
+  published_at : Text
+  salary_minimum : Maybe Text
+  salary_maximum : Maybe Text
+  salary_currency : Maybe Text
+  salary_period : Maybe Text
+  source_url : Text
+  description_html : Text
+
+decode_posting : (JSON, JSON) → Either Problem Posting
+decode_posting (original, exact) = do
+  identifier ← read_id "id" original exact
+  employer ← required_text "companyName" original
+  title ← nonempty_text "jobTitle" original
+  geography ← nonempty_text "jobGeo" original
+  employment ← text_array "jobType" original
+  seniority ← required_text "jobLevel" original
+  industries ← text_array "jobIndustry" original
+  published ← nonempty_text "pubDate" original
+  minimum ← optional_number "salaryMin" original exact
+  maximum ← optional_number "salaryMax" original exact
+  currency ← optional_text "salaryCurrency" original
+  period ← optional_text "salaryPeriod" original
+  url ← nonempty_text "url" original
+  if not (isPrefixOf "https://jobicy.com/jobs/" url) then Left (Problem_With 6 "expected a canonical public Jobicy source URL") else Right ()
+  description ← required_text "jobDescription" original
+  Right (Posting_With identifier employer title geography employment seniority industries published minimum maximum currency period url description)
+
+public export
+record Page where
+  constructor Page_With
+  api_version : Text
+  jobs : List Posting
+  next_cursor : Maybe Text
+
+export
+decode_page : (JSON, JSON) → Either Problem Page
+decode_page (original, exact) = do
+  version ← api_success original exact
+  count ← bounded_integer "jobCount" 0 200 original exact
+  values ← case (field "jobs" original, field "jobs" exact) of
+    (Just (JArray originals), Just (JArray exacts)) ⇒ Right (zip originals exacts)
+    _ ⇒ Left (Problem_With 6 "jobs must be an array")
+  if count ≟ cast (length values) then Right () else Left (Problem_With 6 "jobCount does not match jobs")
+  more ← case field "hasMore" original of
+    Just (JBoolean value) ⇒ Right value
+    _ ⇒ Left (Problem_With 6 "hasMore must be a boolean")
+  next ← case field "nextCursor" original of
+    Just JNull ⇒ if more then Left (Problem_With 9 "hasMore without a cursor") else Right Nothing
+    Just (JString token) ⇒
+      if more && not (token ≟ "") && length token <= 2048 && not (null values)
+      then Right (Just token) else Left (Problem_With 9 "inconsistent cursor pagination")
+    _ ⇒ Left (Problem_With 9 "missing or invalid nextCursor")
+  jobs ← traverse decode_posting values
+  Right (Page_With version jobs next)
+
+export
+job_fields : Posting → List Text
+job_fields job = [job.identifier, job.employer, job.title, job.geography,
+  json_array job.employment_types, job.seniority, json_array job.industries,
+  job.published_at, fromMaybe "null" job.salary_minimum, fromMaybe "null" job.salary_maximum,
+  maybe "null" json_quote job.salary_currency, maybe "null" json_quote job.salary_period,
+  job.source_url, job.description_html]
+
+export
+append_unique : List Posting → List Posting → Either Problem (List Posting)
+append_unique collected [] = Right collected
+append_unique collected (job :: rest) = case find (\existing ⇒ existing.identifier ≟ job.identifier) collected of
+  Nothing ⇒ append_unique (collected ++ [job]) rest
+  Just existing ⇒ if job_fields existing ≟ job_fields job
+    then append_unique collected rest else Left (Problem_With 9 "conflicting copies of the same exact job ID")
+
+export
+search_url : Text → Search → Text
+search_url endpoint search = endpoint ++ "?count=" ++ show search.page_size ++
+  (if search.geography ≟ "" then "" else "&geo=" ++ percent_encode search.geography) ++
+  (if search.industry ≟ "" then "" else "&industry=" ++ percent_encode search.industry) ++
+  (if search.keyword ≟ "" then "" else "&tag=" ++ percent_encode search.keyword) ++
+  (if search.cursor ≟ "" then "" else "&cursor=" ++ percent_encode search.cursor)
+
+export
+status_url : Text → List Text → Text
+status_url endpoint identifiers = endpoint ++ "/status?ids=" ++ concat (intersperse "," identifiers)
+
+export
+job_header : Text
+job_header = tsv_row (["source", "provenance", "id", "companyName", "jobTitle", "jobGeo", "jobType", "jobLevel", "jobIndustry", "pubDate", "salaryMin", "salaryMax", "salaryCurrency", "salaryPeriod", "url", "jobDescription", "observedAt", "requestUrl", "apiVersion"])
+
+export
+render_job : Text → Text → Text → Text → Text → Posting → Text
+render_job format provenance observed request version job =
+  if format ≟ "tsv" then tsv_row (["Jobicy", provenance] ++ job_fields job ++ [observed, request, version])
+  else "{\"source\":\"Jobicy\",\"provenance\":" ++ json_quote provenance ++
+    ",\"id\":" ++ job.identifier ++ ",\"companyName\":" ++ json_quote job.employer ++
+    ",\"jobTitle\":" ++ json_quote job.title ++ ",\"jobGeo\":" ++ json_quote job.geography ++
+    ",\"jobType\":" ++ json_array job.employment_types ++ ",\"jobLevel\":" ++ json_quote job.seniority ++
+    ",\"jobIndustry\":" ++ json_array job.industries ++ ",\"pubDate\":" ++ json_quote job.published_at ++
+    ",\"salaryMin\":" ++ fromMaybe "null" job.salary_minimum ++ ",\"salaryMax\":" ++ fromMaybe "null" job.salary_maximum ++
+    ",\"salaryCurrency\":" ++ maybe "null" json_quote job.salary_currency ++
+    ",\"salaryPeriod\":" ++ maybe "null" json_quote job.salary_period ++
+    ",\"url\":" ++ json_quote job.source_url ++ ",\"jobDescription\":" ++ json_quote job.description_html ++
+    ",\"observedAt\":" ++ json_quote observed ++ ",\"requestUrl\":" ++ json_quote request ++
+    ",\"apiVersion\":" ++ json_quote version ++ "}"
+
+export
+bounded_option : Text → Int → Int → Either Problem Int
+bounded_option token lower upper =
+  if not (ascii_digits token) || length token > 6 then Left (Problem_With 2 "invalid numeric option") else
+  let value : Int = cast token in if value >= lower && value <= upper then Right value else Left (Problem_With 2 "numeric option out of range")
+
+parse_options : List Text → List Text → Search → Either Problem Search
+parse_options [] _ search = Right search
+parse_options (name :: rest) seen search =
+  if elem name seen then Left (Problem_With 2 ("duplicate option: " ++ name)) else
+  case (name, rest) of
+    ("--all", following) ⇒ parse_options following (name :: seen) ({all_pages := True} search)
+    ("--sync", following) ⇒ parse_options following (name :: seen) ({synchronize := True, all_pages := True} search)
+    (_, value :: following) ⇒ do
+      updated ← case name of
+        "--count" ⇒ map (\count ⇒ {page_size := count} search) (bounded_option value 1 200)
+        "--max-pages" ⇒ map (\count ⇒ {page_bound := count} search) (bounded_option value 1 1000)
+        "--geo" ⇒ if value ≟ "" then Left (Problem_With 2 "empty geography") else Right ({geography := value} search)
+        "--industry" ⇒ if value ≟ "" then Left (Problem_With 2 "empty industry") else Right ({industry := value} search)
+        "--tag" ⇒ if byte_count_number (utf8_byte_length value) < 3 || byte_count_number (utf8_byte_length value) > 50 then Left (Problem_With 2 "tag must contain 3–50 UTF-8 bytes; use a provider keyword") else Right ({keyword := value} search)
+        "--cursor" ⇒ if value ≟ "" || length value > 2048 then Left (Problem_With 2 "invalid cursor length") else Right ({cursor := value} search)
+        "--format" ⇒ if elem value ["tsv", "jsonl"] then Right ({output_format := value} search) else Left (Problem_With 2 "format must be tsv or jsonl")
+        "--evidence-dir" ⇒ if value ≟ "" then Left (Problem_With 2 "empty evidence directory") else Right ({evidence_directory := value} search)
+        _ ⇒ Left (Problem_With 2 ("unknown option: " ++ name))
+      parse_options following (name :: seen) updated
+    _ ⇒ Left (Problem_With 2 ("option requires a value: " ++ name))
+
+export
+read_options : List Text → Either Problem Search
+read_options arguments = parse_options arguments [] default_search

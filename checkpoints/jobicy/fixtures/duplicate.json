@@ -1,0 +1,61 @@
+{
+  "apiVersion": "2.2.19",
+  "documentationUrl": "https://jobicy.com/jobs-rss-feed",
+  "jobCount": 2,
+  "lastUpdate": "2026-10-13T09:00:00+00:00",
+  "nextCursor": null,
+  "hasMore": false,
+  "appliedFilters": {
+    "count": 20
+  },
+  "jobs": [
+    {
+      "id": 123456,
+      "url": "https://jobicy.com/jobs/123456-synthetic-role",
+      "jobSlug": "123456-synthetic-role",
+      "jobTitle": "Synthetic π 😀",
+      "companyName": "Synthetic Employer",
+      "companyLogo": false,
+      "jobIndustry": [
+        "Engineering"
+      ],
+      "jobType": [
+        "Full-Time"
+      ],
+      "jobGeo": "USA",
+      "jobLevel": "Senior",
+      "jobExcerpt": "Synthetic description",
+      "jobDescription": "<p>You must construct mathematical proofs &amp; review results.</p>\n\tπ 😀 and literal \\n are preserved.",
+      "pubDate": "2026-10-13T09:00:00+00:00",
+      "salaryMin": 80000,
+      "salaryMax": 100000,
+      "salaryCurrency": "USD",
+      "salaryPeriod": "yearly"
+    },
+    {
+      "id": 123456,
+      "url": "https://jobicy.com/jobs/123456-synthetic-role",
+      "jobSlug": "123456-synthetic-role",
+      "jobTitle": "Synthetic π 😀",
+      "companyName": "Synthetic Employer",
+      "companyLogo": false,
+      "jobIndustry": [
+        "Engineering"
+      ],
+      "jobType": [
+        "Full-Time"
+      ],
+      "jobGeo": "USA",
+      "jobLevel": "Senior",
+      "jobExcerpt": "Synthetic description",
+      "jobDescription": "<p>You must construct mathematical proofs &amp; review results.</p>\n\tπ 😀 and literal \\n are preserved.",
+      "pubDate": "2026-10-13T09:00:00+00:00",
+      "salaryMin": 80000,
+      "salaryMax": 100000,
+      "salaryCurrency": "USD",
+      "salaryPeriod": "yearly"
+    }
+  ],
+  "statusCode": 200,
+  "success": true
+}

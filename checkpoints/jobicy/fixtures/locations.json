@@ -1,0 +1,15 @@
+{
+  "apiVersion": "2.2.19",
+  "locations": [
+    {
+      "geoID": 1,
+      "geoName": "United States",
+      "geoSlug": "usa"
+    }
+  ],
+  "appliedFilters": {
+    "get": "locations"
+  },
+  "statusCode": 200,
+  "success": true
+}
