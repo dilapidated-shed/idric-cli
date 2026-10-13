@@ -5,5 +5,6 @@
 {"id":"waterproof","title":"Designer","employer":"Fixture","url":"https://example.invalid/4","observed":"2026-10-13","complete":true,"description":"You must develop waterproof hardware."},
 {"id":"unclear-theorem","title":"Researcher","employer":"Fixture","url":"https://example.invalid/5","observed":"2026-10-13","complete":true,"description":"Required: theorem proving."},
 {"id":"no-description","title":"Researcher","employer":"Fixture","url":"https://example.invalid/6","observed":"2026-10-13","complete":true},
-{"id":"candidate-review","title":"Reviewer","employer":"Fixture","url":"https://example.invalid/7","observed":"2026-10-13","complete":true,"description":"You must evaluate candidates who construct original mathematical proofs."}
+{"id":"candidate-review","title":"Reviewer","employer":"Fixture","url":"https://example.invalid/7","observed":"2026-10-13","complete":true,"description":"You must evaluate candidates who construct original mathematical proofs."},
+{"id":"proof-and-software","title":"Researcher","employer":"Fixture","url":"https://example.invalid/8","observed":"2026-10-13","complete":true,"description":"You must construct correct, original mathematical proofs and implement software."}
 ]}
