@@ -1,0 +1,465 @@
+module Indeed
+
+import Data.List
+import Data.List1
+import Data.Maybe
+import Data.Text
+import Language.JSON
+import Network.HTTP
+import Network.Types
+import Network.URL
+import Response
+import System
+import System.File
+
+-- Library parsing and OS actions are covering: external input and I/O fail.
+%default covering
+
+record Problem where
+  constructor Make_Problem
+  exit_code : Int
+  diagnostic : Text
+
+record Posting where
+  constructor Make_Posting
+  identifier : Text
+  title : Text
+  employer : Text
+  source_url : Text
+  observed : Text
+  description : Text
+  complete : Bool
+
+record Search where
+  constructor Make_Search
+  keywords : Text
+  location : Text
+  result_limit : Int
+  radius : Int
+
+usage : Text
+usage = "indeed 0.1.0\nCommands:\n  indeed doctor\n  indeed help | --help | --version\n  indeed url --what WORDS --where LOCATION\n  indeed search --what WORDS --where LOCATION [--limit 25] [--radius 5]\n  indeed inspect JOB_ID\n  indeed fixture FILE\n  indeed audit-proofs --input FILE\n  indeed request --what WORDS --where LOCATION [--limit 25] [--radius 5]\nLocation/radius is a provider scope, not a nationwide census.\nLive search needs INDEED_ACCESS_TOKEN. No browser cookies are accepted."
+
+fail : Problem → IO ()
+fail value = do
+  _ ← fPutStrLn stderr ("indeed: " ++ value.diagnostic)
+  case value.exit_code of
+    2 ⇒ exitWith (ExitFailure 2)
+    3 ⇒ exitWith (ExitFailure 3)
+    4 ⇒ exitWith (ExitFailure 4)
+    5 ⇒ exitWith (ExitFailure 5)
+    6 ⇒ exitWith (ExitFailure 6)
+    7 ⇒ exitWith (ExitFailure 7)
+    8 ⇒ exitWith (ExitFailure 8)
+    _ ⇒ exitFailure
+
+clean_field : Text → Text
+clean_field text = pack (map (\character ⇒ if isControl character then ' ' else character) (unpack text))
+
+hex_digit : Int → Char
+hex_digit value = if value < 10 then chr (ord '0' + value) else chr (ord 'A' + value - 10)
+
+escaped_byte : Int → Text
+escaped_byte byte = pack ['%', hex_digit (byte `div` 16), hex_digit (byte `mod` 16)]
+
+unreserved : Char → Bool
+unreserved character =
+  (character >= 'a' && character <= 'z') ||
+  (character >= 'A' && character <= 'Z') ||
+  (character >= '0' && character <= '9') || elem character ['-', '.', '_', '~']
+
+encode_character : Char → Text
+encode_character character =
+  let scalar = ord character in
+  if unreserved character then singleton character
+  else if scalar < 128 then escaped_byte scalar
+  else if scalar < 2048 then escaped_byte (192 + scalar `div` 64) ++ escaped_byte (128 + scalar `mod` 64)
+  else if scalar < 65536 then escaped_byte (224 + scalar `div` 4096) ++ escaped_byte (128 + (scalar `div` 64) `mod` 64) ++ escaped_byte (128 + scalar `mod` 64)
+  else escaped_byte (240 + scalar `div` 262144) ++ escaped_byte (128 + (scalar `div` 4096) `mod` 64) ++ escaped_byte (128 + (scalar `div` 64) `mod` 64) ++ escaped_byte (128 + scalar `mod` 64)
+
+percent_encode : Text → Text
+percent_encode text = concatMap encode_character (unpack text)
+
+-- JSON Show narrows supplementary scalars to Bits16; quote without narrowing.
+quote_character : Char → Text
+quote_character '"' = "\\\""
+quote_character '\\' = "\\\\"
+quote_character '\n' = "\\n"
+quote_character '\r' = "\\r"
+quote_character '\t' = "\\t"
+quote_character character =
+  if ord character < 32 then "\\u00" ++ pack [hex_digit (ord character `div` 16), hex_digit (ord character `mod` 16)]
+  else singleton character
+
+json_quote : Text → Text
+json_quote text = "\"" ++ concatMap quote_character (unpack text) ++ "\""
+
+search_url : Search → Text
+search_url search = "https://www.indeed.com/jobs?q=" ++ percent_encode search.keywords ++ "&l=" ++ percent_encode search.location
+
+search_request : Search → Text
+search_request search =
+  let query = "query { jobSearch(location: { radius: " ++ show search.radius ++ ", radiusUnit: MILES, where: " ++ json_quote search.location ++ " }, what: " ++ json_quote search.keywords ++ ", limit: " ++ show search.result_limit ++ ") { results { job { title sourceEmployerName } } } }" in
+  "{\"query\":" ++ json_quote query ++ ",\"variables\":{}}"
+
+field : Text → JSON → Maybe JSON
+field name value = Language.JSON.Data.lookup name value
+
+required_text : Text → JSON → Either Problem Text
+required_text name value = case field name value of
+  Just (JString text) ⇒ if text ≟ "" then Left (Make_Problem 6 ("empty field " ++ name)) else Right text
+  _ ⇒ Left (Make_Problem 6 ("missing or invalid field " ++ name))
+
+optional_text : Text → JSON → Either Problem Text
+optional_text name value = case field name value of
+  Nothing ⇒ Right ""
+  Just JNull ⇒ Right ""
+  Just (JString text) ⇒ Right text
+  _ ⇒ Left (Make_Problem 6 ("invalid text field " ++ name))
+
+contains : Text → Text → Bool
+contains needle haystack = isInfixOf needle haystack
+
+json_contains_secret : Text → JSON → Bool
+json_contains_secret secret (JString text) = contains secret text
+json_contains_secret secret (JArray values) = any (json_contains_secret secret) values
+json_contains_secret secret (JObject fields) = any (\entry ⇒ contains secret (fst entry) || json_contains_secret secret (snd entry)) fields
+json_contains_secret _ _ = False
+
+valid_date : Text → Bool
+valid_date text = case unpack text of
+  [a,b,c,d,'-',e,f,'-',g,h] ⇒ all isDigit [a,b,c,d,e,f,g,h] &&
+    let month : Int = cast (pack [e,f])
+        day : Int = cast (pack [g,h])
+        year : Int = cast (pack [a,b,c,d])
+        leap = year `mod` 4 ≟ 0 && (not (year `mod` 100 ≟ 0) || year `mod` 400 ≟ 0)
+        max_day = if month ≟ 2 then (if leap then 29 else 28) else (if elem month [4,6,9,11] then 30 else 31)
+    in year >= 1970 && month >= 1 && month <= 12 && day >= 1 && day <= max_day
+  _ ⇒ False
+
+decode_supplied : JSON → Either Problem Posting
+decode_supplied value = do
+  identifier ← required_text "id" value
+  title ← required_text "title" value
+  employer ← required_text "employer" value
+  url ← required_text "url" value
+  date ← required_text "observed" value
+  if not (valid_date date) then Left (Make_Problem 6 "observed must be a valid ISO date") else Right ()
+  if not (isPrefixOf "https://" url || isPrefixOf "http://" url) then Left (Make_Problem 6 "source URL must be HTTP or HTTPS") else Right ()
+  description ← optional_text "description" value
+  complete ← case field "complete" value of
+    Just (JBoolean flag) ⇒ Right (flag && not (trim description ≟ ""))
+    Nothing ⇒ Right False
+    _ ⇒ Left (Make_Problem 6 "complete must be a boolean")
+  Right (Make_Posting identifier title employer url date description complete)
+
+decode_provider : Text → JSON → Either Problem Posting
+decode_provider date value = case field "job" value of
+  Just job ⇒ do
+    title ← required_text "title" job
+    employer ← required_text "sourceEmployerName" job
+    -- These are the only fields verified in the official operation example.
+    Right (Make_Posting "" title employer "" date "" False)
+  Nothing ⇒ Left (Make_Problem 6 "missing job object")
+
+same_posting : Posting → Posting → Bool
+same_posting left right =
+  left.title ≟ right.title && left.employer ≟ right.employer &&
+  left.source_url ≟ right.source_url && left.observed ≟ right.observed &&
+  left.description ≟ right.description && left.complete ≟ right.complete
+
+unique_postings : List Posting → Either Problem (List Posting)
+unique_postings [] = Right []
+unique_postings (current :: rest) = do
+  if any (\other ⇒ not (current.identifier ≟ "") && current.identifier ≟ other.identifier && not (same_posting current other)) rest
+    then Left (Make_Problem 6 "conflicting duplicate job identifier") else Right ()
+  following ← unique_postings (filter (\other ⇒ current.identifier ≟ "" || not (current.identifier ≟ other.identifier)) rest)
+  Right (current :: following)
+
+graphql_problem : List JSON → Problem
+graphql_problem errors =
+  let codes = map (\value ⇒ case field "extensions" value >>= field "code" of Just (JString code) ⇒ code; _ ⇒ "UNKNOWN") errors
+      messages = map (\value ⇒ case field "message" value of Just (JString message) ⇒ message; _ ⇒ "") errors
+  in if any (contains "job-retrieval-service") messages || elem "FORBIDDEN" codes
+     then Make_Problem 3 "ACCESS_BLOCKED: application lacks permission for the requested Indeed resource"
+     else if elem "UNAUTHENTICATED" codes then Make_Problem 3 "ACCESS_BLOCKED: token expired or unauthorized"
+     else if elem "GRAPHQL_VALIDATION_FAILED" codes || elem "BAD_USER_INPUT" codes
+       then Make_Problem 4 "GRAPHQL_ERROR: query or fields are unavailable; no results accepted"
+       else Make_Problem 4 "GRAPHQL_ERROR: provider rejected the request; no results accepted"
+
+decode_inspection : Text → JSON → Either Problem Posting
+decode_inspection date document = case field "data" document >>= field "node" of
+  Just node ⇒ do
+    case field "__typename" node of
+      Just (JString "EmployerJob") ⇒ Right ()
+      _ ⇒ Left (Make_Problem 3 "ACCESS_BLOCKED: requested employer job is absent or inaccessible")
+    identifier ← required_text "id" node
+    case field "jobData" node of
+      Just job_data@(JObject _) ⇒ do
+        title ← required_text "title" job_data
+        company ← required_text "company" job_data
+        description ← required_text "description" job_data
+        url ← optional_text "externalJobPageUrl" job_data
+        Right (Make_Posting identifier title company url date description True)
+      _ ⇒ Left (Make_Problem 3 "ACCESS_BLOCKED: employer job description is inaccessible")
+  _ ⇒ Left (Make_Problem 3 "ACCESS_BLOCKED: requested employer job is absent or inaccessible")
+
+decode_document : Text → JSON → Either Problem (List Posting)
+decode_document date document = do
+  case field "errors" document of
+    Just (JArray []) ⇒ Right ()
+    Just (JArray errors) ⇒ Left (graphql_problem errors)
+    Nothing ⇒ Right ()
+    _ ⇒ Left (Make_Problem 6 "invalid GraphQL errors field")
+  case field "postings" document of
+    Just (JArray values) ⇒ do
+      case field "provenance" document of
+        Just (JString source) ⇒ if elem source ["synthetic", "supplied", "permitted-response"] then Right () else Left (Make_Problem 6 "unsupported input provenance")
+        _ ⇒ Left (Make_Problem 6 "supplied postings need explicit provenance")
+      rows ← traverse decode_supplied values
+      unique_postings rows
+    Just _ ⇒ Left (Make_Problem 6 "postings must be an array")
+    Nothing ⇒ case field "data" document >>= field "node" of
+      Just _ ⇒ map (\job ⇒ [job]) (decode_inspection date document)
+      Nothing ⇒ case field "data" document >>= field "jobSearch" of
+        Just search ⇒ do
+          case field "pageInfo" search of
+            Nothing ⇒ Right ()
+            Just _ ⇒ Left (Make_Problem 4 "PAGINATION_UNVERIFIED: operation requires a verified pagination contract")
+          case field "results" search of
+            Just (JArray values) ⇒ traverse (decode_provider date) values
+            _ ⇒ Left (Make_Problem 6 "missing or invalid jobSearch.results")
+        Nothing ⇒ Left (Make_Problem 6 "missing data.jobSearch")
+
+decode_response : Text → Text → Either Problem (List Posting)
+decode_response date body = case Language.JSON.parse body of
+  Just document ⇒ decode_document date document
+  Nothing ⇒ Left (Make_Problem 6 "MALFORMED_RESPONSE: invalid JSON")
+
+decode_live_response : Text → Text → Text → Either Problem (List Posting)
+decode_live_response wanted_id date body = case Language.JSON.parse body of
+  Nothing ⇒ Left (Make_Problem 6 "MALFORMED_RESPONSE: invalid JSON")
+  Just document ⇒ case field "postings" document of
+    Just _ ⇒ Left (Make_Problem 6 "provider returned an offline-input envelope; no live results accepted")
+    Nothing ⇒ do
+      jobs ← decode_document date document
+      if wanted_id ≟ "" then (if isJust (field "data" document >>= field "jobSearch") then Right jobs else Left (Make_Problem 6 "wrong operation response")) else case jobs of
+        [job] ⇒ if job.identifier ≟ wanted_id then Right jobs else Left (Make_Problem 6 "returned job identifier does not match inspection request")
+        _ ⇒ Left (Make_Problem 6 "inspection did not return exactly one employer job")
+
+input_evidence : Text → Text
+input_evidence body = case Language.JSON.parse body >>= field "provenance" of
+  Just (JString "synthetic") ⇒ "synthetic-fixture"
+  Just (JString "supplied") ⇒ "supplied-description"
+  Just (JString "permitted-response") ⇒ "permitted-response-offline"
+  _ ⇒ "offline-response"
+
+record ProofFinding where
+  constructor Make_Proof_Finding
+  category : Text
+  requirement : Text
+
+has_any : List Text → Text → Bool
+has_any needles text = any (\needle ⇒ contains needle text) needles
+
+classify_clause : Text → Maybe ProofFinding
+classify_clause clause =
+  let text = toLower (trim clause)
+      proof_words = any (\token ⇒ elem (pack (filter isAlpha (unpack token))) ["proof", "proofs", "prove", "proves", "proving", "theorem", "theorems"]) (words text)
+      required = has_any ["must ", "required", "requirement", "responsibilities", "responsibility", "you will ", "you'll ", "duties", "expected to "] text || any (\prefix ⇒ isPrefixOf prefix text) ["construct ", "develop ", "write ", "derive ", "prove "]
+      negative = isPrefixOf "no " text || has_any ["not required", "no requirement", "not a requirement", "not necessary", "not needed", "is optional", "are optional", "not part of", "not expected", "must not", "will not", "need not", "do not require", "don't require", "without "] text
+      reviewing = has_any ["review", "teach", "evaluat", "translat", "grade", "assess"] text
+      verification = has_any ["formal verification", "software", "hardware", "program correctness", "circuit", "model checking"] text
+      constructing = has_any ["construct mathematical proof", "construct original mathematical proof", "construct novel mathematical proof", "constructing mathematical proof", "constructing original mathematical proof", "develop mathematical proof", "develop rigorous mathematical proof", "write mathematical proof", "derive mathematical proof", "prove new theorem", "prove theorem"] text
+      mathematical = has_any ["mathematical proof", "theorem", "mathematics"] text
+      original = has_any ["original mathematical proof", "new mathematical proof", "novel mathematical proof", "prove new theorem", "original proof", "novel proof"] text
+  in if not proof_words || negative then Nothing
+     else if not required then
+       if has_any ["hope to", "hopes to", "interested in", "research interests", "our mission", "opportunity to", "we study", "may "] text then Nothing
+       else Just (Make_Proof_Finding "unknown" (trim clause))
+     else if reviewing && constructing && (has_any ["and construct", "and develop", "and prove"] text || not (has_any ["teach", "evaluat", "translat"] text)) then Just (Make_Proof_Finding "unknown" (trim clause))
+     else if reviewing then Just (Make_Proof_Finding "4" (trim clause))
+     else if verification then Just (Make_Proof_Finding "3" (trim clause))
+     else if constructing && mathematical then Just (Make_Proof_Finding (if original then "1" else "2") (trim clause))
+     else Just (Make_Proof_Finding "unknown" (trim clause))
+
+classify : Posting → ProofFinding
+classify job =
+  if not job.complete || has_any ["...", "…"] job.description then Make_Proof_Finding "unknown" "description incomplete"
+  else let clauses = filter (\value ⇒ not (trim value ≟ "")) (forget (split (\character ⇒ elem character ['.', '\n', ';']) job.description))
+           findings = mapMaybe classify_clause clauses
+       in case find (\value ⇒ value.category ≟ "1") findings of
+         Just value ⇒ value
+         Nothing ⇒ case find (\value ⇒ value.category ≟ "2") findings of
+           Just value ⇒ value
+           Nothing ⇒ case find (\value ⇒ value.category ≟ "3") findings of
+             Just value ⇒ value
+             Nothing ⇒ case find (\value ⇒ value.category ≟ "4") findings of
+               Just value ⇒ value
+               Nothing ⇒ case findings of
+                 value :: _ ⇒ value
+                 [] ⇒ Make_Proof_Finding "5" ""
+
+render_posting : Text → Posting → Text
+render_posting evidence job = concat (intersperse "\t" (map clean_field ["Indeed", evidence, job.identifier, job.employer, job.title, job.source_url, job.observed, if job.complete then "complete" else "incomplete", job.description]))
+
+render_finding : Text → Posting → Text
+render_finding evidence job =
+  let result = classify job in concat (intersperse "\t" (map clean_field ["Indeed", evidence, job.identifier, job.employer, job.source_url, job.observed, result.category, result.requirement]))
+
+print_rows : Bool → Text → List Posting → IO ()
+print_rows audit evidence jobs = do
+  putStrLn (if audit then "provider\tevidence\tjob_id\temployer\tsource_url\tobserved\tcategory\trequirement" else "provider\tevidence\tjob_id\temployer\ttitle\tsource_url\tobserved\tdescription_state\tdescription")
+  traverse_ (putStrLn . (if audit then render_finding evidence else render_posting evidence)) jobs
+
+load_input : Text → IO (Either Problem Text)
+load_input path = do
+  body ← readFile path
+  pure (case body of Left _ ⇒ Left (Make_Problem 7 "could not read input file"); Right text ⇒ if length text > 8388608 then Left (Make_Problem 6 "input exceeds 8 MiB") else Right text)
+
+run_fixture : Bool → Text → IO ()
+run_fixture audit path = do
+  body ← load_input path
+  case body >>= decode_response "" of
+    Left value ⇒ fail value
+    Right jobs ⇒ do
+      print_rows audit (case body of Right text ⇒ input_evidence text; Left _ ⇒ "offline-input") jobs
+      let categories = map (category . classify) jobs
+      _ ← fPutStrLn stderr ("OFFLINE_INPUT: unique=" ++ show (length jobs) ++ " examined=" ++ show (length jobs) ++ " qualifying=" ++ show (length (filter (\value ⇒ elem value ["1","2"]) categories)) ++ " rejected=" ++ show (length (filter (\value ⇒ elem value ["3","4","5"]) categories)) ++ " unknown=" ++ show (length (filter (≟ "unknown") categories)) ++ "; no live job retrieval")
+      pure ()
+
+option_pairs : List Text → Either Problem (List (Text, Text))
+option_pairs [] = Right []
+option_pairs (name :: value :: rest) = do
+  if not (elem name ["--what", "--where", "--limit", "--radius"]) then Left (Make_Problem 2 ("unknown option " ++ name)) else Right ()
+  pairs ← option_pairs rest
+  if any (\pair ⇒ fst pair ≟ name) pairs then Left (Make_Problem 2 ("duplicate option " ++ name)) else Right ((name, value) :: pairs)
+option_pairs _ = Left (Make_Problem 2 "option requires a value")
+
+bounded_number : Text → Int → Int → Either Problem Int
+bounded_number text lower upper =
+  if text ≟ "" || not (all isDigit (unpack text)) || length text > 6 then Left (Make_Problem 2 "invalid numeric option")
+  else let value : Int = cast text in if value >= lower && value <= upper then Right value else Left (Make_Problem 2 "numeric option out of range")
+
+parse_search : List Text → Either Problem Search
+parse_search arguments = do
+  options ← option_pairs arguments
+  what ← maybe (Left (Make_Problem 2 "--what is required")) Right (lookup "--what" options)
+  where_text ← maybe (Left (Make_Problem 2 "--where is required")) Right (lookup "--where" options)
+  if trim what ≟ "" || trim where_text ≟ "" then Left (Make_Problem 2 "search text and location must be nonempty") else Right ()
+  limit ← bounded_number (fromMaybe "25" (lookup "--limit" options)) 1 100
+  radius ← bounded_number (fromMaybe "5" (lookup "--radius" options)) 0 1000
+  Right (Make_Search what where_text limit radius)
+
+leap_year : Integer → Bool
+leap_year year = year `mod` 4 ≟ 0 && (not (year `mod` 100 ≟ 0) || year `mod` 400 ≟ 0)
+
+year_and_day : Integer → Integer → (Integer, Integer)
+year_and_day year elapsed =
+  let days = if leap_year year then 366 else 365 in
+  if elapsed < days then (year, elapsed) else year_and_day (year + 1) (elapsed - days)
+
+month_and_day : Integer → Integer → List Integer → (Integer, Integer)
+month_and_day month elapsed [] = (month, elapsed + 1)
+month_and_day month elapsed (days :: rest) =
+  if elapsed < days then (month, elapsed + 1) else month_and_day (month + 1) (elapsed - days) rest
+
+observation_date : IO Text
+observation_date = do
+  seconds ← time
+  let (year, day_of_year) = year_and_day 1970 (seconds `div` 86400)
+  let (month, day) = month_and_day 1 day_of_year [31, if leap_year year then 29 else 28,31,30,31,30,31,31,30,31,30,31]
+  pure (show year ++ "-" ++ (if month < 10 then "0" else "") ++ show month ++ "-" ++ (if day < 10 then "0" else "") ++ show day)
+
+record Observation where
+  constructor Make_Observation
+  response_body : Text
+  observation_date_text : Text
+  evidence : Text
+
+authorized_query : Text → IO (Either Problem Observation)
+authorized_query request_body = do
+  token ← getEnv "INDEED_ACCESS_TOKEN"
+  case token of
+    Nothing ⇒ pure (Left (Make_Problem 3 "ACCESS_BLOCKED: INDEED_ACCESS_TOKEN is absent; provisioned Indeed API access is required"))
+    Just "" ⇒ pure (Left (Make_Problem 3 "ACCESS_BLOCKED: INDEED_ACCESS_TOKEN is empty"))
+    Just secret ⇒ do
+      endpoint ← getEnv "INDEED_TEST_ENDPOINT"
+      let destination = fromMaybe "https://apis.indeed.com/graphql" endpoint
+      let local_test = isPrefixOf "http://127.0.0.1:" destination && isSuffixOf "/graphql" destination
+      if isJust endpoint && (not local_test || not (secret ≟ "synthetic-test-token")) then pure (Left (Make_Problem 2 "test endpoint requires loopback /graphql and synthetic-test-token")) else
+       case (parse_url destination, make_credential_header "Authorization" ("Bearer " ++ secret), make_header "Content-Type" "application/json") of
+        (Right target, Right authorization, Right content_type) ⇒ do
+          observed ← observation_date
+          result ← fetch_response (post target (MkHttpBody request_body)) [authorization, content_type]
+          case result of
+            Left _ ⇒ pure (Left (Make_Problem 5 "NETWORK_FAILURE: ICU could not complete the request"))
+            Right response ⇒
+              if response.status ≟ 401 || response.status ≟ 403 then pure (Left (Make_Problem 3 "ACCESS_BLOCKED: HTTP unauthorized or forbidden"))
+              else if response.status ≟ 429 then pure (Left (Make_Problem 8 "THROTTLED: HTTP 429; retry later"))
+              else if response.status < 200 || response.status >= 300 then pure (Left (Make_Problem 4 ("HTTP_FAILURE: status=" ++ show response.status)))
+              else if contains secret response.body || maybe False (json_contains_secret secret) (Language.JSON.parse response.body) then pure (Left (Make_Problem 6 "response contains credential text; body suppressed"))
+              else pure (Right (Make_Observation response.body observed (if local_test then "local-transport-fixture" else "live-provider")))
+        _ ⇒ pure (Left (Make_Problem 3 "invalid credential header or destination; secret not displayed"))
+
+run_search : Search → IO ()
+run_search search = do
+  observation ← authorized_query (search_request search)
+  case observation of
+    Left value ⇒ fail value
+    Right captured ⇒ case decode_live_response "" captured.observation_date_text captured.response_body of
+      Left value ⇒ fail value
+      Right jobs ⇒ do
+        print_rows False captured.evidence jobs
+        _ ← fPutStrLn stderr ("scope=" ++ clean_field search.location ++ "; radius_miles=" ++ show search.radius ++ "; limit=" ++ show search.result_limit ++ "; returned=" ++ show (length jobs) ++ "; description_examined=0; qualifying=0; rejected=0; unknown=" ++ show (length jobs) ++ "; nationwide_total=UNKNOWN; pagination=UNVERIFIED")
+        pure ()
+
+render_inspection_json : Text → List Posting → Text
+render_inspection_json evidence jobs =
+  "{\"provenance\":" ++ json_quote (if evidence ≟ "local-transport-fixture" then "synthetic" else "permitted-response") ++ ",\"postings\":[" ++ concat (intersperse "," (map render jobs)) ++ "]}"
+  where
+    render : Posting → Text
+    render job = "{\"id\":" ++ json_quote job.identifier ++ ",\"title\":" ++ json_quote job.title ++ ",\"employer\":" ++ json_quote job.employer ++ ",\"url\":" ++ json_quote job.source_url ++ ",\"observed\":" ++ json_quote job.observed ++ ",\"complete\":true,\"description\":" ++ json_quote job.description ++ "}"
+
+run_inspect : Bool → Text → IO ()
+run_inspect as_json identifier =
+  if trim identifier ≟ "" || length identifier > 4096 then fail (Make_Problem 2 "JOB_ID must be a nonempty EmployerJob IRI, at most 4096 characters") else do
+    let query = "query { node(id: " ++ json_quote identifier ++ ") { __typename ... on EmployerJob { id jobData { title company description externalJobPageUrl } } } }"
+    observation ← authorized_query ("{\"query\":" ++ json_quote query ++ ",\"variables\":{}}")
+    case observation of
+      Left value ⇒ fail value
+      Right captured ⇒ case decode_live_response identifier captured.observation_date_text captured.response_body of
+        Left value ⇒ fail value
+        Right jobs ⇒ if as_json then putStrLn (render_inspection_json captured.evidence jobs) else print_rows False captured.evidence jobs
+
+doctor : IO ()
+doctor = do
+  token ← getEnv "INDEED_ACCESS_TOKEN"
+  putStrLn "component\tstatus\tdetail"
+  putStrLn "provider\tIndeed\tpermissioned GraphQL jobSearch"
+  putStrLn "offline\tAVAILABLE\tURL, parser and proof audit"
+  putStrLn "description\tPERMISSIONED\tnode(EmployerJob IRI).jobData.description; employer-scoped access only"
+  putStrLn "pagination\tUNVERIFIED\tnot present in public jobSearch schema"
+  putStrLn "android\tNOT_RUN\tLinux host acceptance does not cover Termux"
+  putStrLn (case token of Nothing ⇒ "authorization\tACCESS_BLOCKED\tmissing INDEED_ACCESS_TOKEN"; Just "" ⇒ "authorization\tACCESS_BLOCKED\tempty INDEED_ACCESS_TOKEN"; Just _ ⇒ "authorization\tUNVERIFIED\ttoken present; permission not established")
+
+main : IO ()
+main = do
+  arguments ← getArgs
+  case drop 1 arguments of
+    ["--version"] ⇒ putStrLn "indeed 0.1.0"
+    ["--help"] ⇒ putStrLn usage
+    ["help"] ⇒ putStrLn usage
+    ["doctor"] ⇒ doctor
+    ["fixture", path] ⇒ run_fixture False path
+    ["audit-proofs", "--input", path] ⇒ run_fixture True path
+    ["inspect", identifier] ⇒ run_inspect False identifier
+    ["inspect", identifier, "--json"] ⇒ run_inspect True identifier
+    command :: options ⇒ case parse_search options of
+      Left value ⇒ fail value
+      Right search ⇒ case command of
+        "url" ⇒ putStrLn (search_url search)
+        "request" ⇒ putStrLn (search_request search)
+        "search" ⇒ run_search search
+        _ ⇒ fail (Make_Problem 2 usage)
+    [] ⇒ fail (Make_Problem 2 usage)

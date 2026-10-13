@@ -1,0 +1,7 @@
+component	status	detail
+provider	Indeed	permissioned GraphQL jobSearch
+offline	AVAILABLE	URL, parser and proof audit
+description	PERMISSIONED	node(EmployerJob IRI).jobData.description; employer-scoped access only
+pagination	UNVERIFIED	not present in public jobSearch schema
+android	NOT_RUN	Linux host acceptance does not cover Termux
+authorization	ACCESS_BLOCKED	missing INDEED_ACCESS_TOKEN

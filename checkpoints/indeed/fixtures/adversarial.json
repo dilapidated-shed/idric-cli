@@ -1,0 +1,9 @@
+{"provenance":"synthetic","postings":[
+{"id":"must-not","title":"Analyst","employer":"Fixture","url":"https://example.invalid/1","observed":"2026-10-13","complete":true,"description":"You must not construct mathematical proofs."},
+{"id":"not-a-requirement","title":"Analyst","employer":"Fixture","url":"https://example.invalid/2","observed":"2026-10-13","complete":true,"description":"Constructing mathematical proofs is not a requirement."},
+{"id":"no-original","title":"Analyst","employer":"Fixture","url":"https://example.invalid/3","observed":"2026-10-13","complete":true,"description":"No original mathematical proof construction is required."},
+{"id":"waterproof","title":"Designer","employer":"Fixture","url":"https://example.invalid/4","observed":"2026-10-13","complete":true,"description":"You must develop waterproof hardware."},
+{"id":"unclear-theorem","title":"Researcher","employer":"Fixture","url":"https://example.invalid/5","observed":"2026-10-13","complete":true,"description":"Required: theorem proving."},
+{"id":"no-description","title":"Researcher","employer":"Fixture","url":"https://example.invalid/6","observed":"2026-10-13","complete":true},
+{"id":"candidate-review","title":"Reviewer","employer":"Fixture","url":"https://example.invalid/7","observed":"2026-10-13","complete":true,"description":"You must evaluate candidates who construct original mathematical proofs."}
+]}

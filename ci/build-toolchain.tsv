@@ -1,0 +1,3 @@
+build_id	target	toolchain	ick_revision	ick_status	ick_evidence
+icu-response-native	x86_64-linux	ick	c61e448251744a2f40ad743ebef1a027bdcd2f9d	qualified	checkpoints/indeed/receipts/build.txt
+ick-qualification	x86_64-linux	ick	c61e448251744a2f40ad743ebef1a027bdcd2f9d	qualified	checkpoints/indeed/ick-qualification.c

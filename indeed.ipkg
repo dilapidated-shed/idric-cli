@@ -1,0 +1,7 @@
+package indeed
+version = 0.1.0
+depends = contrib, idric_net, icu_response
+sourcedir = "checkpoints/indeed/idric"
+modules = Indeed
+main = Indeed
+executable = indeed

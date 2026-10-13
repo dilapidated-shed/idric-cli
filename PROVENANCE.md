@@ -24,3 +24,12 @@ The branch history previously contained Ithon and Fieldmouse variants for severa
 The following `az` API branches were documentation/research only at migration time and therefore were not copied as CLI programs: `adzuna-api`, `arbeitnow-api`, `careerjet-api`, `indeed-api`, `jobicy-api`, `jooble-api`, `linkedin-api`, `openai-api`, `reed-api`, `remotive-api`, `themuse-api`, `usajobs-api`, and `ziprecruiter-api`.
 
 Date of consolidation: 2026-09-01.
+
+# Indeed execution slice
+
+The implementation branch starts at `cli` b710708e9fc1426f10bca2d426fbb210fc729c20
+and incorporates all six Indeed checkpoint paths from the diverged `indeed`
+branch at 639f5507a9e42835efa59f42b54ddb4059f06294. The top-level symbolic link is
+preserved. The inherited inventory and its earlier Ashtray-Archer/az provenance
+are retained. New executable source replaces the 25-line insights checkpoint;
+it does not overwrite the inventory or newer repository instructions.

@@ -1,0 +1,9 @@
+target	Ubuntu-24.04-x86_64
+Chez	10.4.1
+Chez-archive-sha256	2e74952db7bc177f0c3602e2217a341ba677d733eec4cd7726418c3a4e1ef308
+libc6	2.39-0ubuntu8.6
+libgcc-13-dev	13.3.0-6ubuntu2~24.04
+libssl3t64	3.0.13-0ubuntu3.6
+Grease-Oils-source	5651cf97a1b5042f24f14112a7ade9a1518eb0bc
+Grease-runtime-artifact	11727693085
+Grease-runtime-zip-sha256	20c526c8bae5dc32a7b3d01a39eca5bdb7ee4c63fe540f34a07af7ba8b0d0039

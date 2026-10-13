@@ -1,0 +1,13 @@
+#!/usr/bin/env grease
+var parent = "$(dirname -- "$0")"
+var here = "$(cd -- "$parent" && pwd)"
+var repo = "$(cd -- "$here/../.." && pwd)"
+if (int($#) !== 1) { echo 'install requires one absolute prefix' >&2; exit 2 }
+var prefix = $1
+if (not prefix.startsWith('/')) { echo 'install prefix must be absolute' >&2; exit 2 }
+test -x "$repo/build/exec/indeed"
+test -s "$repo/build/exec/indeed_app/libicu_transport.so"
+mkdir -p "$prefix/bin/indeed_app"
+cp -R "$repo/build/exec/indeed_app/." "$prefix/bin/indeed_app/"
+install -m 0755 "$repo/build/exec/indeed" "$prefix/bin/indeed"
+"$prefix/bin/indeed" --version

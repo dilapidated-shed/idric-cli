@@ -8,6 +8,9 @@ This repository is the consolidation point for the CLI/API-access programs that 
 
 - `bin/az` — Amazon product/price access and append-only price observations.
 - `bin/abe` — AbeBooks delivered-price lookup and Impact affiliate links.
+- `Indeed.idric` — installable Linux CLI with search URLs, permissioned GraphQL
+  requests, authorized employer-job inspection, saved-response parsing and proof
+  requirement auditing. See [the Indeed build and acceptance](checkpoints/indeed/README.md).
 - `Ap.idric` — Associated Press API checkpoint.
 - `Economist.idric` — Economist API checkpoint.
 - `Ft.idric` — Financial Times API checkpoint.

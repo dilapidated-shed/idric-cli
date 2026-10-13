@@ -1,0 +1,88 @@
+module FixtureServer
+
+import Data.List
+import Data.List1
+import Data.Maybe
+import Data.Text
+import Network.Socket
+import Network.Types
+import System
+import System.File
+
+-- A server waits for external input and reports I/O failure explicitly.
+%default covering
+
+die : Text → IO a
+die message = do
+  _ ← fPutStrLn stderr ("fixture-server: " ++ message)
+  exitFailure
+
+byte_count : Text → Int
+byte_count text = cast (byte_count_number (utf8_byte_length text))
+
+request_length : Text → Maybe Int
+request_length text = case forget (split (≟ '\n') text) of
+  [] ⇒ Nothing
+  values ⇒ do
+    line ← find (isPrefixOf "Content-Length:") values
+    let value = trim (substr 15 (length line) line)
+    if all isDigit (unpack value) && not (value ≟ "") then Just (cast value) else Nothing
+
+request_body : List Char → Maybe Text
+request_body ('\r' :: '\n' :: '\r' :: '\n' :: body) = Just (pack body)
+request_body (_ :: rest) = request_body rest
+request_body [] = Nothing
+
+whole_request : Text → Bool
+whole_request text = case (request_length text, request_body (unpack text)) of
+  (Just count, Just body) ⇒ byte_count body >= count
+  _ ⇒ False
+
+receive_request : Socket → Text → IO Text
+receive_request connection accumulated =
+  if byte_count accumulated > 65536 then die "request exceeds 64 KiB"
+  else if whole_request accumulated then pure accumulated
+  else do
+    outcome ← recv connection 4096
+    case outcome of
+      Left _ ⇒ die "request read failed"
+      Right (chunk, count) ⇒ if count <= 0 then die "request ended early" else receive_request connection (accumulated ++ chunk)
+
+send_all : Socket → Text → IO ()
+send_all connection text = do
+  outcome ← send connection text
+  case outcome of
+    Left _ ⇒ die "response write failed"
+    Right count ⇒ if count ≟ byte_count text then pure () else die "partial response write"
+
+main : IO ()
+main = do
+  arguments ← getArgs
+  case drop 1 arguments of
+    [port_text, status_text, body_path, ready_path, request_path] ⇒ do
+      body ← readFile body_path
+      case body of
+        Left _ ⇒ die "fixture could not be read"
+        Right body ⇒ do
+          created ← socket AF_INET Stream 0
+          case created of
+            Left _ ⇒ die "socket could not be created"
+            Right listener ⇒ do
+              bound ← bind listener (Just (IPv4Addr 127 0 0 1)) (cast port_text)
+              if not (bound ≟ 0) then die "loopback port unavailable" else pure ()
+              listening ← listen listener
+              if not (listening ≟ 0) then die "listen failed" else pure ()
+              ready ← writeFile ready_path "ready\n"
+              case ready of Left _ ⇒ die "ready marker failed"; Right () ⇒ pure ()
+              accepted ← accept listener
+              case accepted of
+                Left _ ⇒ die "accept failed"
+                Right (connection, _) ⇒ do
+                  request ← receive_request connection ""
+                  saved ← writeFile request_path request
+                  case saved of Left _ ⇒ die "capture failed"; Right () ⇒ pure ()
+                  let response = "HTTP/1.0 " ++ status_text ++ " Fixture\r\nContent-Type: application/json\r\nContent-Length: " ++ show (byte_count body) ++ "\r\nConnection: close\r\n\r\n" ++ body
+                  send_all connection response
+                  close connection
+                  close listener
+    _ ⇒ die "requires PORT STATUS BODY READY REQUEST"
