@@ -1,0 +1,29 @@
+#!/usr/bin/env grease
+# Actual authorized-surface attempts and separately labeled fixture audit.
+if (int($#) !== 2) { echo 'requires INSTALLED_INDEED ABSOLUTE_OUTPUT_DIRECTORY' >&2; exit 2 }
+var program = $1
+var output = $2
+var parent = "$(dirname -- "$0")"
+var here = "$(cd -- "$parent" && pwd)"
+mkdir -p "$output"
+"$program" doctor > "$output/doctor.tsv"
+printf 'query\trequested_location\tstatus\texit\treturned\texamined\tqualifying\trejected\tunknown\n' > "$output/search-family.tsv"
+var number = 0
+var queries = :| 'construct mathematical proofs' 'original mathematical proofs' 'prove new theorems' 'develop rigorous mathematical proofs' 'theorem proving' |
+for query in (queries) {
+  setvar number += 1
+  try { env -u INDEED_TEST_ENDPOINT "$program" search --what "\"$query\"" --where 'United States' > "$output/search-$number.stdout" 2> "$output/search-$number.stderr" }
+  var code = _error.code
+  if (code === 3) {
+    printf '%s\tUnited States\tACCESS_BLOCKED\t3\tUNKNOWN\t0\tUNKNOWN\tUNKNOWN\tUNKNOWN\n' "$query" >> "$output/search-family.tsv"
+  } elif (code === 0) {
+    var lines = "$(wc -l < "$output/search-$number.stdout")"
+    var count = int(lines.strip()) - 1
+    printf '%s\tUnited States\tINCOMPLETE_SEARCH_ROWS\t0\t%d\t0\tUNKNOWN\tUNKNOWN\t%d\n' "$query" "$count" "$count" >> "$output/search-family.tsv"
+  } else {
+    printf '%s\tUnited States\tFAILED\t%d\tUNKNOWN\t0\tUNKNOWN\tUNKNOWN\tUNKNOWN\n' "$query" "$code" >> "$output/search-family.tsv"
+  }
+  "$program" url --what "\"$query\"" --where 'United States' > "$output/search-$number.url"
+}
+"$program" audit-proofs --input "$here/fixtures/requirements.json" > "$output/synthetic-audit.tsv" 2> "$output/synthetic-audit.stderr"
+printf 'scope=10 synthetic descriptions; unique=10; examined=10; proof-construction-categories-1-and-2=3; original-category-1=2; originality-unspecified-category-2=1; rejected-categories-3-4-5=6; unknown=1; employment-evidence=NONE\n' > "$output/synthetic-summary.txt"

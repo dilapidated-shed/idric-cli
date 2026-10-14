@@ -1,0 +1,133 @@
+#!/usr/bin/env grease
+# Requirement-driven tests of the installed executable and actual ICU transport.
+var parent = "$(dirname -- "$0")"
+var here = "$(cd -- "$parent" && pwd)"
+var repo = "$(cd -- "$here/../.." && pwd)"
+var program = get(ENV, 'INDEED_PROGRAM') or "$repo/build/exec/indeed"
+var server = "$repo/build/exec/indeed-fixture-server"
+var temporary = "$(mktemp -d)"
+var port = 20000 + (int($$) % 20000)
+# Retain the bounded synthetic captures if a check fails; never erase evidence.
+
+proc expect (label, code, ...command) {
+  try { @command > "$temporary/actual" 2> "$temporary/stderr" }
+  var actual = _error.code
+  if (actual !== int(code)) {
+    echo "FAIL $label: expected $code, received $actual"
+    cat "$temporary/actual" "$temporary/stderr"
+    exit 1
+  }
+  printf 'PASS\t%s\n' $label
+}
+
+proc assert_text (needle) {
+  grep -F -- "$needle" "$temporary/actual" "$temporary/stderr" > /dev/null
+}
+
+expect version 0 "$program" --version
+assert_text 'indeed 0.1.0'
+expect help 0 "$program" --help
+assert_text 'audit-proofs'
+expect doctor 0 env -u INDEED_ACCESS_TOKEN "$program" doctor
+assert_text 'ACCESS_BLOCKED'
+expect url-utf8 0 "$program" url --what '"π 😀 proofs"' --where 'Ann Arbor, MI'
+printf '%s\n' 'https://www.indeed.com/jobs?q=%22%CF%80%20%F0%9F%98%80%20proofs%22&l=Ann%20Arbor%2C%20MI' > "$temporary/expected"
+cmp "$temporary/expected" "$temporary/actual"
+expect request-escaping 0 "$program" request --what '"π 😀 proofs"' --where 'Ann Arbor, MI'
+cp "$temporary/actual" "$temporary/request.json"
+assert_text 'sourceEmployerName'
+expect bad-limit 2 "$program" search --what proof --where USA --limit 0
+expect duplicate-option 2 "$program" url --what proof --what proof --where USA
+expect missing-option 2 "$program" url --what proof
+expect missing-credentials 3 env -u INDEED_ACCESS_TOKEN "$program" search --what proof --where USA
+assert_text 'ACCESS_BLOCKED'
+test ! -s "$temporary/actual"
+expect empty-credentials 3 env INDEED_ACCESS_TOKEN= "$program" search --what proof --where USA
+expect inspect-unavailable 3 env -u INDEED_ACCESS_TOKEN "$program" inspect fixture-id
+expect missing-file 7 "$program" fixture "$temporary/missing"
+expect normal 0 "$program" fixture "$here/fixtures/normal.json"
+assert_text 'Synthetic Employer'
+expect empty 0 "$program" fixture "$here/fixtures/empty.json"
+test "$(wc -l < "$temporary/actual")" -eq 1
+expect malformed 6 "$program" fixture "$here/fixtures/malformed.json"
+expect missing-fields 6 "$program" fixture "$here/fixtures/missing-fields.json"
+expect expired 3 "$program" fixture "$here/fixtures/expired.json"
+expect forbidden 3 "$program" fixture "$here/fixtures/forbidden.json"
+expect denied-service 3 "$program" fixture "$here/fixtures/access-blocked.json"
+expect pagination-unverified 4 "$program" fixture "$here/fixtures/pagination.json"
+expect deduplicate 0 "$program" audit-proofs --input "$here/fixtures/duplicates.json"
+test "$(wc -l < "$temporary/actual")" -eq 2
+expect conflicting-duplicates 6 "$program" fixture "$here/fixtures/conflicting-duplicates.json"
+expect proof-categories 0 "$program" audit-proofs --input "$here/fixtures/requirements.json"
+tail -n +2 "$temporary/actual" | cut -f3,7,8 > "$temporary/categories"
+cmp "$here/fixtures/requirements.expected.tsv" "$temporary/categories"
+cp "$temporary/actual" "$temporary/first-audit"
+expect repeated-output 0 "$program" audit-proofs --input "$here/fixtures/requirements.json"
+cmp "$temporary/first-audit" "$temporary/actual"
+expect adversarial-categories 0 "$program" audit-proofs --input "$here/fixtures/adversarial.json"
+tail -n +2 "$temporary/actual" | cut -f3,7,8 > "$temporary/categories"
+cmp "$here/fixtures/adversarial.expected.tsv" "$temporary/categories"
+
+proc transport (label, status, fixture, code, ...command) {
+  setglobal port += 1
+  var ready = "$temporary/ready-$port"
+  var request_file = "$temporary/capture-$port"
+  fork { "$server" "$port" "$status" "$here/fixtures/$fixture" "$ready" "$request_file" > "$temporary/server-out" 2> "$temporary/server-error" }
+  var server_pid = $!
+  var retries = 0
+  while (retries < 100) {
+    if test -f "$ready" { break }
+    sleep 0.05
+    setvar retries += 1
+  }
+  if test ! -f "$ready" {
+    kill "$server_pid"
+    cat "$temporary/server-error"
+    exit 1
+  }
+  if (len(command) === 0) {
+    expect "$label" "$code" env INDEED_ACCESS_TOKEN=synthetic-test-token INDEED_TEST_ENDPOINT="http://127.0.0.1:$port/graphql" "$program" search --what '"π 😀 proofs"' --where 'Ann Arbor, MI'
+  } else {
+    expect "$label" "$code" env INDEED_ACCESS_TOKEN=synthetic-test-token INDEED_TEST_ENDPOINT="http://127.0.0.1:$port/graphql" "$program" @command
+  }
+  wait "$server_pid"
+  grep -F 'POST /graphql HTTP/1.0' "$request_file" > /dev/null
+  grep -F 'Content-Type: application/json' "$request_file" > /dev/null
+  # An independently built Idriç checker parses both layers of request JSON.
+  if (len(command) === 0) { "$repo/build/exec/indeed-request-check" "$request_file" } else { "$repo/build/exec/indeed-request-check" "$request_file" inspect }
+  if grep -F synthetic-test-token "$temporary/actual" "$temporary/stderr" > /dev/null {
+    echo 'FAIL secret disclosure'
+    exit 1
+  }
+}
+
+transport transport-normal 200 normal.json 0
+assert_text 'local-transport-fixture'
+transport transport-empty 200 empty.json 0
+transport transport-denied 200 access-blocked.json 3
+transport transport-expired 200 expired.json 3
+transport transport-forbidden 200 forbidden.json 3
+transport transport-http401 401 empty.json 3
+transport transport-http403 403 empty.json 3
+transport transport-http500 500 empty.json 4
+transport transport-throttled 429 empty.json 8
+transport transport-malformed 200 malformed.json 6
+transport transport-secret-echo 200 secret-echo.json 6
+transport transport-escaped-secret-echo 200 secret-echo-escaped.json 6
+transport transport-unicode-escapes 200 unicode-escapes.json 0
+assert_text 'Unicode π 😀'
+transport transport-isolated-surrogate 200 isolated-surrogate.json 6
+transport transport-offline-envelope 200 requirements.json 6
+transport inspect-full-description 200 inspect-full.json 0 inspect fixture-employer-job
+assert_text 'You must construct mathematical proofs.'
+transport inspect-json-description 200 inspect-full.json 0 inspect fixture-employer-job --json
+cp "$temporary/actual" "$temporary/inspected.json"
+expect inspect-to-audit 0 "$program" audit-proofs --input "$temporary/inspected.json"
+assert_text 'You must construct mathematical proofs'
+transport inspect-inaccessible 200 inspect-limited.json 3 inspect fixture-employer-job
+transport inspect-wrong-id 200 inspect-wrong-id.json 6 inspect fixture-employer-job
+transport inspect-forbidden 200 forbidden.json 3 inspect fixture-employer-job
+expect wrong-test-origin 2 env INDEED_ACCESS_TOKEN=synthetic-test-token INDEED_TEST_ENDPOINT=https://example.invalid/graphql "$program" search --what proof --where USA
+setvar port += 1
+expect network-refused 5 env INDEED_ACCESS_TOKEN=synthetic-test-token INDEED_TEST_ENDPOINT="http://127.0.0.1:$port/graphql" "$program" search --what proof --where USA
+printf 'PASS\texecutable-and-transport\n'

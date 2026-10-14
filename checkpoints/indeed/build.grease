@@ -1,0 +1,35 @@
+#!/usr/bin/env grease
+# Compilation only; dependency acquisition is a separate explicit stage.
+var parent = "$(dirname -- "$0")"
+var here = "$(cd -- "$parent" && pwd)"
+var repo = "$(cd -- "$here/../.." && pwd)"
+cd -- "$repo"
+var compiler = get(ENV, 'IDRIC') or 'idris2'
+var ick = get(ENV, 'ICK') or 'ick'
+var icu = get(ENV, 'ICU_ROOT') or ''
+if (icu === '') { echo 'ICU_ROOT must name the pinned ICU checkout' >&2; exit 2 }
+proc require_pin (component, root) {
+  var expected = "$(awk -F '\t' -v component="$component" '$1 == component {print $3}' checkpoints/indeed/source-pins.tsv)"
+  var actual = "$(git -C "$root" rev-parse HEAD)"
+  if (actual !== expected) { echo "source pin mismatch: $component" >&2; exit 2 }
+}
+require_pin Idric $[ENV.IDRIC_ROOT]
+require_pin Idric-JSON $[ENV.IDRIC_JSON_ROOT]
+require_pin Idric-Net $[ENV.IDRIC_NET_ROOT]
+require_pin ICU "$icu"
+require_pin ICK $[ENV.ICK_SOURCE_ROOT]
+var flags = :| |
+var driver_dir = get(ENV, 'ICK_DRIVER_DIR') or ''
+var libgcc_dir = get(ENV, 'HOST_LIBGCC_DIR') or ''
+if (driver_dir !== '') { setvar flags = ["-B$driver_dir/"] }
+if (libgcc_dir !== '') { setvar flags = flags ++ ["-B$libgcc_dir/", '-static-libgcc'] }
+test -f "$icu/native/transport.c"
+mkdir -p build/qualification
+"$ick" @flags -std=c11 checkpoints/indeed/ick-qualification.c -o build/qualification/ick-check
+build/qualification/ick-check
+"$compiler" --build indeed.ipkg
+"$compiler" --build indeed-fixture-server.ipkg
+"$compiler" --build indeed-request-check.ipkg
+"$ick" @flags -O2 -std=c11 -Wall -Wextra -Werror -fPIC -shared "$icu/native/transport.c" -o build/exec/indeed_app/libicu_transport.so -lssl -lcrypto
+build/exec/indeed --version
+sha256sum checkpoints/indeed/idric/Indeed.idric | cut -d ' ' -f1 > build/exec/indeed_app/source.sha256

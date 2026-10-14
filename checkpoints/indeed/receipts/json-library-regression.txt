@@ -1,0 +1,19 @@
+The real local HTTP transport test returned this rejecting failure before the
+library repair:
+
+FAIL transport-escaped-secret-echo: expected 6, received 0
+title=syntheticMtestMtoken
+
+The original JSON string-token decoder interpreted lowercase d as 45 instead
+of 13, so the UTF-16 code unit 002d became 77 (M) instead of 45 (-). Decoded
+credential comparison therefore could not recognize the escaped token.
+
+The maintained JSON library now decodes both cases correctly and validates
+high/low surrogate pairs before constructing Unicode characters. The Idriç
+acceptance program covers lower/uppercase hex, BMP characters, supplementary
+characters and malformed/isolated surrogate refusal. The inherited BMP
+round-trip test (all scalar values 0 through 55295) returned [].
+
+Published library source: 16443ffea5123139930d499930bc2da7e065da1f
+Core compiler source remains: 2734ac5a86610eddfab73b1644d72b4ac85a65ee
+This is a library repair, not a different client implementation or parser shim.

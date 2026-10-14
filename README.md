@@ -11,6 +11,8 @@ This repository is the consolidation point for the CLI/API-access programs that 
   and installed-command tests. See `checkpoints/jobicy/README.md` for executed
   host acceptance and the separately unexecuted Android targets.
 
+- `Indeed.idric` — executable Idriç Indeed CLI for public search links, authorized API access, captured-response inspection and conservative proof-requirement auditing. See [Indeed build and acceptance](checkpoints/indeed/README.md). Live provider queries require permission and a valid token.
+
 - `bin/az` — Amazon product/price access and append-only price observations.
 - `bin/abe` — AbeBooks delivered-price lookup and Impact affiliate links.
 - `Ap.idric` — Associated Press API checkpoint.

@@ -1,0 +1,41 @@
+module RequestCheck
+
+import Data.Text
+import Language.JSON
+import Network.Types
+import System
+import System.File
+
+%default covering
+
+request_body : List Char → Maybe Text
+request_body ('\r' :: '\n' :: '\r' :: '\n' :: body) = Just (pack body)
+request_body (_ :: rest) = request_body rest
+request_body [] = Nothing
+
+expected_query : Text
+expected_query = "query { jobSearch(location: { radius: 5, radiusUnit: MILES, where: \"Ann Arbor, MI\" }, what: \"\\\"π 😀 proofs\\\"\", limit: 25) { results { job { title sourceEmployerName } } } }"
+
+inspection_query : Text
+inspection_query = "query { node(id: \"fixture-employer-job\") { __typename ... on EmployerJob { id jobData { title company description externalJobPageUrl } } } }"
+
+valid_document : Text → Text → Bool
+valid_document expected text = case Language.JSON.parse text of
+  Just (JObject [("query", JString query), ("variables", JObject [])]) ⇒ query ≟ expected
+  _ ⇒ False
+
+main : IO ()
+main = do
+  arguments ← getArgs
+  case drop 1 arguments of
+    path :: options ⇒ do
+      value ← readFile path
+      case value of
+        Right text ⇒ case request_body (unpack text) of
+          Just body ⇒
+            if valid_document (if options ≟ ["inspect"] then inspection_query else expected_query) body && isInfixOf ("Content-Length: " ++ show (byte_count_number (utf8_byte_length body)) ++ "\r\n") text
+              then putStrLn "PASS\trequest-json-and-utf8-byte-length"
+              else exitFailure
+          _ ⇒ exitFailure
+        _ ⇒ exitFailure
+    _ ⇒ exitFailure

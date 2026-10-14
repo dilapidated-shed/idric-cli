@@ -28,3 +28,18 @@ install-jobicy:
 jobicy-test:
 	test -n "$(KITCHEN_ROOT)"
 	"$(GREASE)" "$(KITCHEN_ROOT)/tasks/jobicy-cli/1.grease" test "$(CURDIR)"
+
+# Separate Indeed client; the existing Jobicy targets remain available.
+IDRIC ?= idris2
+ICK ?= ick
+ICK_FLAGS ?=
+ICU_ROOT ?=
+.PHONY: indeed indeed-test install-indeed
+indeed:
+	"$(GREASE)" checkpoints/indeed/build.grease
+
+indeed-test:
+	"$(GREASE)" checkpoints/indeed/check.grease
+
+install-indeed:
+	"$(GREASE)" checkpoints/indeed/install.grease "$(DESTDIR)$(PREFIX)"

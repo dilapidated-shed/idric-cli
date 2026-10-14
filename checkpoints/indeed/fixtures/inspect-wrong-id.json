@@ -1,0 +1,1 @@
+{"data":{"node":{"__typename":"EmployerJob","id":"wrong-job","jobData":{"title":"Fixture researcher","company":"Fixture Employer","description":"You must construct mathematical proofs.","externalJobPageUrl":"https://example.invalid/wrong-job"}}}}

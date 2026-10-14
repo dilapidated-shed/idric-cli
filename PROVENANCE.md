@@ -24,3 +24,7 @@ The branch history previously contained Ithon and Fieldmouse variants for severa
 The following `az` API branches were documentation/research only at migration time and therefore were not copied as CLI programs: `adzuna-api`, `arbeitnow-api`, `careerjet-api`, `indeed-api`, `jobicy-api`, `jooble-api`, `linkedin-api`, `openai-api`, `reed-api`, `remotive-api`, `themuse-api`, `usajobs-api`, and `ziprecruiter-api`.
 
 Date of consolidation: 2026-09-01.
+
+## Indeed execution slice
+
+The Indeed client combines the source inventory from the earlier `indeed` branch at `639f5507a9e42835efa59f42b54ddb4059f06294` with the executable client from `a6230ee2f42bc07ea5223b445a9b21899d2f3087`. Its API inventory and credentials/authorization boundaries remain separately recorded under `checkpoints/indeed/`. The preexisting Jobicy client is retained unchanged.
