@@ -274,8 +274,8 @@ jobs_in_response response =
       case (json_field "jobs" parsed, json_field "hits" parsed) of
         (Just (JArray jobs), Just (JNumber hits)) ⇒
           case parsePositive (without_trailing_dot_zero (show hits)) of
-            Just total ⇒ Right (jobs, total)
-            Nothing ⇒ Left "invalid search hit count"
+            Right total ⇒ Right (jobs, total)
+            Left _ ⇒ Left "invalid search hit count"
         _ ⇒ Left "search endpoint response is missing a jobs array or hit count"
 
 page_size : SearchOptions → Number
@@ -335,7 +335,7 @@ complete_result options expected selected_reversed scanned =
     Nothing ⇒ Left "no search hit count was observed"
     Just hits ⇒
       if complete_census options &&
-         (scanned ≟ hits && length selected_reversed ≟ hits) == False
+         not (scanned ≟ hits && length selected_reversed ≟ hits)
         then Left ("incomplete census: scanned=" ++ show scanned ++
                    ", distinct=" ++ show (length selected_reversed) ++
                    ", reported_hits=" ++ show hits)
@@ -368,7 +368,7 @@ collect_jobs options (S pages_left) offset expected seen selected_reversed scann
               let finished = next_scanned >= hits || (not (complete_census options) &&
                 (length batch < page_size options ||
                  length next_selected >= result_limit options))
-              if finished || null batch
+              if finished || isNil batch
                 then pure (complete_result options (Just hits) next_selected next_scanned)
                 else do
                   sleep (cast (pause_seconds options))
@@ -429,8 +429,8 @@ print_results options jobs =
 fixture_response : Text
 fixture_response =
   "{\"hits\":2,\"jobs\":[" ++
-  "{\"id_icims\":123,\"title\":\"Entry level\",\"normalized_location\":\"Michigan\"," ++
-  "\"job_path\":\"/en/jobs/123\",\"basic_qualifications\":\"<li>0 years of experience</li>\"}," ++
+  "{\"id_icims\":123,\"id\":\"source-123\",\"title\":\"Entry level\",\"normalized_location\":\"Michigan\"," ++
+  "\"job_path\":\"/en/jobs/123\",\"business_category\":\"aws\",\"team\":\"team-sde-primary\",\"basic_qualifications\":\"<li>0 years of experience</li>\"}," ++
   "{\"id_icims\":124,\"title\":\"Experienced\",\"normalized_location\":\"Michigan\"," ++
   "\"job_path\":\"/en/jobs/124\",\"basic_qualifications\":\"<li>3+ years required</li>\"}]}"
 
@@ -447,6 +447,9 @@ offline_checks =
          link entry ≟ "https://www.amazon.jobs/en/jobs/123" &&
          title experienced ≟ "Experienced" &&
          identifier experienced ≟ "124" &&
+         source_record_id entry ≟ "source-123" &&
+         business_category entry ≟ "aws" &&
+         team_label entry ≟ "team-sde-primary" &&
          exceeds_years 0 (qualification_words "2 to 4 years") &&
          not (exceeds_years 2 (qualification_words "1 year"))
     _ ⇒ False
