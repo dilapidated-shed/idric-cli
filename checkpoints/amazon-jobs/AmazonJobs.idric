@@ -193,6 +193,12 @@ job_digits ('/' :: 'j' :: 'o' :: 'b' :: 's' :: '/' :: rest) =
   pack (takeWhile (\character => character >= '0' && character <= '9') rest)
 job_digits (_ :: rest) = job_digits rest
 
+numeric_requisition : Text → Bool
+numeric_requisition value =
+  case unpack value of
+    [] ⇒ False
+    digits ⇒ all (\digit => digit >= '0' && digit <= '9') digits
+
 job_from_json : JSON → Job
 job_from_json raw =
   let path = field_text "job_path" raw
@@ -323,7 +329,7 @@ choose_jobs options (raw :: remaining) seen selected_reversed =
   if not (complete_census options) && length selected_reversed >= result_limit options
     then (seen, selected_reversed)
     else let job = job_from_json raw in
-      if identifier job ≟ "" || elem (identifier job) seen
+      if not (numeric_requisition (identifier job)) || elem (identifier job) seen
         then choose_jobs options remaining seen selected_reversed
         else let next_seen = identifier job :: seen in
           if eligible options job
@@ -440,7 +446,7 @@ fixture_response =
   "{\"hits\":2,\"jobs\":[" ++
   "{\"id_icims\":123,\"id\":\"source-123\",\"title\":\"Entry level\",\"normalized_location\":\"Michigan\"," ++
   "\"job_path\":\"/en/jobs/123\",\"business_category\":\"aws\",\"team\":\"team-sde-primary\",\"basic_qualifications\":\"<li>0 years of experience</li>\"}," ++
-  "{\"id_icims\":124,\"title\":\"Experienced\",\"normalized_location\":\"Michigan\"," ++
+  "{\"id_icims\":124,\"id\":\"source-124\",\"title\":\"Experienced\",\"normalized_location\":\"Michigan\"," ++
   "\"job_path\":\"/en/jobs/124\",\"basic_qualifications\":\"<li>3+ years required</li>\"}]}"
 
 offline_checks : Bool
@@ -450,6 +456,7 @@ offline_checks =
       let entry = job_from_json first
           experienced = job_from_json second
           screened = { max_years := Just 0 } initial_options
+          census = { complete_census := True } initial_options
       in eligible screened entry &&
          not (eligible screened experienced) &&
          identifier entry ≟ "123" &&
@@ -459,6 +466,14 @@ offline_checks =
          source_record_id entry ≟ "source-123" &&
          business_category entry ≟ "aws" &&
          team_label entry ≟ "team-sde-primary" &&
+         numeric_requisition (identifier entry) &&
+         not (numeric_requisition "missing-id") &&
+         (case complete_result census (Just 2) [experienced, entry] 2 of
+            Right _ ⇒ True
+            Left _ ⇒ False) &&
+         (case complete_result census (Just 2) [entry, entry] 2 of
+            Left _ ⇒ True
+            Right _ ⇒ False) &&
          exceeds_years 0 (qualification_words "2 to 4 years") &&
          not (exceeds_years 2 (qualification_words "1 year"))
     _ ⇒ False
