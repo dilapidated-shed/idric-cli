@@ -274,8 +274,8 @@ jobs_in_response response =
       case (json_field "jobs" parsed, json_field "hits" parsed) of
         (Just (JArray jobs), Just (JNumber hits)) ⇒
           case parsePositive (without_trailing_dot_zero (show hits)) of
-            Right total ⇒ Right (jobs, total)
-            Left _ ⇒ Left "invalid search hit count"
+            Just total ⇒ Right (jobs, total)
+            Nothing ⇒ Left "invalid search hit count"
         _ ⇒ Left "search endpoint response is missing a jobs array or hit count"
 
 page_size : SearchOptions → Number
