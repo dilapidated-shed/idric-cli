@@ -97,7 +97,10 @@ parse_options : List Text → Either Text SearchOptions
 parse_options = go initial_options
   where
     go : SearchOptions → List Text → Either Text SearchOptions
-    go options [] = Right options
+    go options [] =
+      if complete_census options && isJust (max_years options)
+        then Left "--all cannot be combined with --max-years; census must retain every requisition"
+        else Right options
     go options ("-l" :: value :: rest) = go ({ location := value } options) rest
     go options ("--location" :: value :: rest) = go ({ location := value } options) rest
     go options ("--state" :: value :: rest) = go ({ state := value } options) rest
@@ -337,11 +340,17 @@ complete_result options expected selected_reversed scanned =
     Nothing ⇒ Left "no search hit count was observed"
     Just hits ⇒
       if complete_census options &&
-         not (scanned ≟ hits && length selected_reversed ≟ hits)
+         not (scanned ≟ hits && length selected_reversed ≟ hits &&
+              all (\job => not (source_record_id job ≟ "")) selected_reversed &&
+              length (nub (map source_record_id selected_reversed)) ≟ hits)
         then Left ("incomplete census: scanned=" ++ show scanned ++
                    ", distinct=" ++ show (length selected_reversed) ++
                    ", reported_hits=" ++ show hits)
         else Right (reverse selected_reversed, scanned, hits)
+
+hit_count_changed : Maybe Number → Number → Bool
+hit_count_changed Nothing _ = False
+hit_count_changed (Just earlier) current = not (earlier ≟ current)
 
 covering
 collect_jobs : SearchOptions → Number → Number → Maybe Number →
@@ -358,10 +367,7 @@ collect_jobs options (S pages_left) offset expected seen selected_reversed scann
       case response of
         Left problem ⇒ pure (Left problem)
         Right (batch, hits) ⇒
-          if complete_census options &&
-             case expected of
-               Nothing ⇒ False
-               Just earlier ⇒ not (earlier ≟ hits)
+          if complete_census options && hit_count_changed expected hits
             then pure (Left "Amazon hit count changed during census")
             else do
               let (next_seen, next_selected) =
