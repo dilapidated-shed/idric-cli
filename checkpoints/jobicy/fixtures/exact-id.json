@@ -1,0 +1,35 @@
+{
+  "apiVersion": "2.2.19",
+  "documentationUrl": "https://jobicy.com/jobs-rss-feed",
+  "jobCount": 1,
+  "lastUpdate": "2026-10-13T09:00:00+00:00",
+  "nextCursor": null,
+  "hasMore": false,
+  "appliedFilters": {
+    "count": 20
+  },
+  "jobs": [
+    {
+      "id": 9007199254740993,
+      "url": "https://jobicy.com/jobs/9007199254740993-synthetic-role",
+      "jobSlug": "RAW9007199254740993-synthetic-role",
+      "jobTitle": "Synthetic exact large ID",
+      "companyName": "Synthetic Employer",
+      "companyLogo": false,
+      "jobIndustry": [
+        "Engineering"
+      ],
+      "jobType": [
+        "Full-Time"
+      ],
+      "jobGeo": "USA",
+      "jobLevel": "Senior",
+      "jobExcerpt": "Synthetic description",
+      "jobDescription": "<p>You must construct mathematical proofs &amp; review results.</p>\n\tπ 😀 and literal \\n are preserved.",
+      "pubDate": "2026-10-13T09:00:00+00:00",
+      "salaryMin": 9007199254740995
+    }
+  ],
+  "statusCode": 200,
+  "success": true
+}

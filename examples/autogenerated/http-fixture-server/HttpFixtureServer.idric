@@ -1,0 +1,76 @@
+module HttpFixtureServer
+
+import Data.List
+import Data.List1
+import Data.Text
+import Network.Socket
+import Network.Types
+import System
+import System.File
+
+%default covering
+
+die : Text → IO a
+die message = do
+  _ ← fPutStrLn stderr ("http-fixture-server: " ++ message)
+  exitFailure
+
+byte_count : Text → Int
+byte_count text = cast (byte_count_number (utf8_byte_length text))
+
+receive_request : Socket → Text → IO Text
+receive_request connection accumulated =
+  if byte_count accumulated > 65536 then die "request exceeds 64 KiB"
+  else if isInfixOf "\r\n\r\n" accumulated then pure accumulated else do
+    received ← recv connection 4096
+    case received of
+      Left _ ⇒ die "request read failed"
+      Right (chunk, count) ⇒ if count <= 0 then die "request ended early" else receive_request connection (accumulated ++ chunk)
+
+serve_remaining : Socket → List Text → Text → Int → IO ()
+serve_remaining listener [] capture index = pure ()
+serve_remaining listener (scenario :: following) capture index =
+  case forget (split (≟ '\t') scenario) of
+    [status, path, target] ⇒ do
+      body ← readFile path
+      case body of
+        Left _ ⇒ die "fixture body unavailable"
+        Right body ⇒ do
+          accepted ← accept listener
+          case accepted of
+            Left _ ⇒ die "accept failed"
+            Right (connection, _) ⇒ do
+              request ← receive_request connection ""
+              saved ← writeFile (capture ++ "-" ++ show index) request
+              case saved of Left _ ⇒ die "capture failed"; Right () ⇒ pure ()
+              if not (isPrefixOf ("GET " ++ target ++ " HTTP/1.0\r\n") request) then die "request meaning differs from scenario" else pure ()
+              if isInfixOf "Authorization:" request then die "public request sent authorization" else pure ()
+              let response = "HTTP/1.0 " ++ status ++ " Fixture\r\nContent-Type: application/json\r\nContent-Length: " ++ show (byte_count body) ++ "\r\nConnection: close\r\n\r\n" ++ body
+              sent ← send connection response
+              case sent of Left _ ⇒ die "send failed"; Right count ⇒ if count ≟ byte_count response then pure () else die "partial send"
+              close connection
+              serve_remaining listener following capture (index + 1)
+    _ ⇒ die "scenario requires STATUS, BODY, TARGET separated by tabs"
+
+main : IO ()
+main = do
+  arguments ← getArgs
+  case drop 1 arguments of
+    [port_text, scenarios, ready, capture] ⇒ do
+      rows ← readFile scenarios
+      case rows of
+        Left _ ⇒ die "scenario file unavailable"
+        Right rows ⇒ do
+          created ← socket AF_INET Stream 0
+          case created of
+            Left _ ⇒ die "socket failed"
+            Right listener ⇒ do
+              bound ← bind listener (Just (IPv4Addr 127 0 0 1)) (cast port_text)
+              if not (bound ≟ 0) then die "loopback port unavailable" else pure ()
+              listening ← listen listener
+              if not (listening ≟ 0) then die "listen failed" else pure ()
+              marker ← writeFile ready "ready\n"
+              case marker of Left _ ⇒ die "ready marker failed"; Right () ⇒ pure ()
+              serve_remaining listener (filter (\line ⇒ not (line ≟ "")) (lines rows)) capture 1
+              close listener
+    _ ⇒ die "requires PORT SCENARIOS READY CAPTURE"

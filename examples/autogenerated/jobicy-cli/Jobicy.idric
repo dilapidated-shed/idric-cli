@@ -1,0 +1,8 @@
+module Jobicy
+
+import Jobicy.Run
+
+-- Command execution can fail because arguments, files and networks are external.
+covering
+main : IO ()
+main = run_jobicy

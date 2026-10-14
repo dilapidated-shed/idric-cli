@@ -1,4 +1,4 @@
 config/amazon-secret
 .state/
 .cache/
-/build/
+build/
