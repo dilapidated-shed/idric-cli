@@ -1,0 +1,21 @@
+{
+  "apiVersion": "2.2.19",
+  "checkedAt": "2026-10-13T09:00:00Z",
+  "count": 3,
+  "jobs": [
+    {
+      "id": 123456,
+      "status": "active"
+    },
+    {
+      "id": 123457,
+      "status": "closed"
+    },
+    {
+      "id": 123458,
+      "status": "unknown"
+    }
+  ],
+  "statusCode": 200,
+  "success": true
+}

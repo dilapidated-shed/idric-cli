@@ -6,6 +6,11 @@ This repository is the consolidation point for the CLI/API-access programs that 
 
 ## Current programs
 
+- `jobicy` — executable Idriç Jobicy public remote-job CLI: bounded cursor
+  traversal, complete descriptions, status/taxonomy commands, TSV/JSONL output,
+  and installed-command tests. See `checkpoints/jobicy/README.md` for executed
+  host acceptance and the separately unexecuted Android targets.
+
 - `bin/az` — Amazon product/price access and append-only price observations.
 - `bin/abe` — AbeBooks delivered-price lookup and Impact affiliate links.
 - `Ap.idric` — Associated Press API checkpoint.

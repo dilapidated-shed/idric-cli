@@ -1,0 +1,151 @@
+#!/usr/bin/env grease
+var parent = "$(dirname -- "$0")"
+var here = "$(cd -- "$parent" && pwd)"
+var repo = "$(cd -- "$here/../.." && pwd)"
+var program = get(ENV, 'JOBICY_PROGRAM') or "$repo/build/exec/jobicy"
+var server = "$repo/build/exec/jobicy-fixture-server"
+var temporary = "$(mktemp -d)"
+var port = 22000 + (int($$) % 18000)
+var checks = 0
+
+proc expect (label, code, ...command) {
+  try { @command > "$temporary/actual" 2> "$temporary/stderr" }
+  var actual = _error.code
+  if (actual !== int(code)) {
+    echo "FAIL $label: expected $code, received $actual; evidence=$temporary"
+    cat "$temporary/actual" "$temporary/stderr"
+    exit 1
+  }
+  setglobal checks += 1
+  printf 'PASS\t%s\n' "$label"
+}
+
+proc assert_text (needle) {
+  grep -F -- "$needle" "$temporary/actual" "$temporary/stderr" > /dev/null
+}
+
+proc no_rows {
+  test ! -s "$temporary/actual"
+}
+
+expect version 0 "$program" version
+assert_text 'jobicy 0.1.0'
+expect help 0 "$program" help
+assert_text '100 sequential requests'
+expect doctor 0 "$program" doctor
+assert_text 'credentials disabled'
+expect uri-unicode 0 "$program" url --count 20 --geo usa --tag 'π 😀'
+printf '%s\n' 'https://jobicy.com/api/v2/remote-jobs?count=20&geo=usa&tag=%CF%80%20%F0%9F%98%80' > "$temporary/expected"
+cmp "$temporary/expected" "$temporary/actual"
+expect cursor-is-opaque 0 "$program" url --cursor 'opaque/π +?='
+assert_text 'cursor=opaque%2F%CF%80%20%2B%3F%3D'
+expect count-low 2 "$program" url --count 0
+expect count-high 2 "$program" url --count 201
+expect count-overflow 2 "$program" url --count 99999999999999999999999
+expect duplicate-option 2 "$program" url --geo usa --geo usa
+expect unknown-option 2 "$program" url --nonsense x
+expect missing-option-value 2 "$program" url --geo
+expect tag-short 2 "$program" url --tag x
+expect tag-byte-bound 2 "$program" url --tag '😀😀😀😀😀😀😀😀😀😀😀😀😀'
+expect missing-fixture 7 "$program" fixture "$temporary/missing"
+expect normal-tsv 0 "$program" fixture "$here/fixtures/normal.json"
+test "$(wc -l < "$temporary/actual")" -eq 3
+assert_text '\n\tπ 😀'
+jq -r '[.jobs[0].jobDescription] | @tsv' "$here/fixtures/normal.json" > "$temporary/description.expected.tsv"
+sed -n '2p' "$temporary/actual" | cut -f16 > "$temporary/description.actual.tsv"
+cmp "$temporary/description.expected.tsv" "$temporary/description.actual.tsv"
+expect normal-jsonl 0 "$program" fixture "$here/fixtures/normal.json" --format jsonl
+assert_text '&amp;'
+assert_text 'literal \\n'
+jq -r '.jobs[0].jobDescription' "$here/fixtures/normal.json" > "$temporary/description.expected"
+head -n 1 "$temporary/actual" | jq -r '.jobDescription' > "$temporary/description.actual"
+cmp "$temporary/description.expected" "$temporary/description.actual"
+expect exact-id 0 "$program" fixture "$here/fixtures/exact-id.json" --format jsonl
+assert_text '"id":9007199254740993'
+assert_text '"salaryMin":9007199254740995'
+expect absent-salary 0 "$program" fixture "$here/fixtures/normal.json" --format jsonl
+assert_text '"salaryMin":null'
+expect empty 0 "$program" fixture "$here/fixtures/empty.json"
+test "$(wc -l < "$temporary/actual")" -eq 1
+expect malformed 6 "$program" fixture "$here/fixtures/malformed.json"
+expect duplicate-json-keys 6 "$program" fixture "$here/fixtures/duplicate-fields.json"
+expect bad-count 6 "$program" fixture "$here/fixtures/bad-count.json"
+expect string-id-refused 6 "$program" fixture "$here/fixtures/string-id.json"
+expect missing-description 6 "$program" fixture "$here/fixtures/missing-description.json"
+expect api-failure 4 "$program" fixture "$here/fixtures/error.json"
+expect inconsistent-pagination 9 "$program" fixture "$here/fixtures/inconsistent.json"
+expect duplicate-id 0 "$program" fixture "$here/fixtures/duplicate.json"
+test "$(wc -l < "$temporary/actual")" -eq 2
+expect conflicting-id 9 "$program" fixture "$here/fixtures/conflicting.json"
+expect three-statuses 0 "$program" fixture "$here/fixtures/status.json"
+tail -n +2 "$temporary/actual" | cut -f3,4 > "$temporary/status.tsv"
+printf '123456\tactive\n123457\tclosed\n123458\tunknown\n' > "$temporary/expected"
+cmp "$temporary/expected" "$temporary/status.tsv"
+expect invalid-status 6 "$program" fixture "$here/fixtures/bad-status.json"
+expect locations-fixture 0 "$program" fixture "$here/fixtures/locations.json"
+assert_text 'United States'
+expect industries-fixture 0 "$program" fixture "$here/fixtures/industries.json"
+assert_text 'Engineering'
+
+proc transport (label, code, scenario, ...arguments) {
+  setglobal port += 1
+  var ready = "$temporary/ready-$port"
+  var captured = "$temporary/requests-$port"
+  fork { "$server" "$port" "$scenario" "$ready" "$captured" > "$temporary/server-out" 2> "$temporary/server-error" }
+  var process = $!
+  var retries = 0
+  while (retries < 100) {
+    if test -f "$ready" { break }
+    sleep 0.05
+    setvar retries += 1
+  }
+  if test ! -f "$ready" { kill "$process"; cat "$temporary/server-error"; exit 1 }
+  expect "$label" "$code" env JOBICY_TEST_MODE=synthetic JOBICY_TEST_ENDPOINT="http://127.0.0.1:$port/api/v2/remote-jobs" "$program" @arguments
+  wait "$process"
+}
+
+var filters = '/api/v2/remote-jobs?count=20&geo=usa&industry=engineering&tag=mathematics'
+printf '200\t%s\t%s\n200\t%s\t%s\n200\t%s\t%s\n' "$here/fixtures/first.json" "$filters" "$here/fixtures/middle.json" "$filters&cursor=opaque%2F%CF%80%20%2B%3F%3D" "$here/fixtures/final.json" "$filters&cursor=next-final" > "$temporary/three-pages"
+transport sequential-pagination 0 "$temporary/three-pages" search --geo usa --industry engineering --tag mathematics --all --format jsonl
+test "$(wc -l < "$temporary/actual")" -eq 2
+assert_text 'WINDOW_EXHAUSTED'
+assert_text 'local-transport-fixture'
+printf '200\t%s\t%s\n' "$here/fixtures/first.json" "$filters" > "$temporary/one-page"
+transport incomplete-first-page 0 "$temporary/one-page" search --geo usa --industry engineering --tag mathematics
+assert_text 'PAGE_ONLY'
+printf '200\t%s\t%s\n200\t%s\t%s\n' "$here/fixtures/first.json" "$filters" "$here/fixtures/middle.json" "$filters&cursor=opaque%2F%CF%80%20%2B%3F%3D" > "$temporary/two-pages"
+transport page-bound 9 "$temporary/two-pages" search --geo usa --industry engineering --tag mathematics --all --max-pages 2
+no_rows
+printf '200\t%s\t%s\n200\t%s\t%s\n' "$here/fixtures/first.json" "$filters" "$here/fixtures/repeated-cursor.json" "$filters&cursor=opaque%2F%CF%80%20%2B%3F%3D" > "$temporary/repeated-cursor"
+transport repeated-cursor 9 "$temporary/repeated-cursor" search --geo usa --industry engineering --tag mathematics --all
+no_rows
+
+proc single_transport (label, status, fixture, code, target, ...arguments) {
+  printf '%s\t%s\t%s\n' "$status" "$here/fixtures/$fixture" "$target" > "$temporary/scenario"
+  transport "$label" "$code" "$temporary/scenario" @arguments
+}
+
+single_transport transport-final 200 normal.json 0 '/api/v2/remote-jobs?count=20' search
+single_transport transport-empty 200 empty.json 0 '/api/v2/remote-jobs?count=20' search
+single_transport transport-malformed 200 malformed.json 6 '/api/v2/remote-jobs?count=20' search
+single_transport transport-api-failure 200 error.json 4 '/api/v2/remote-jobs?count=20' search
+single_transport transport-http400 400 error.json 4 '/api/v2/remote-jobs?count=20' search
+single_transport transport-http403 403 empty.json 4 '/api/v2/remote-jobs?count=20' search
+single_transport transport-http500 500 empty.json 4 '/api/v2/remote-jobs?count=20' search
+single_transport transport-http429 429 empty.json 8 '/api/v2/remote-jobs?count=20' search
+single_transport transport-status 200 status.json 0 '/api/v2/remote-jobs/status?ids=123456,123457,123458' status 123456 123457 123458
+single_transport transport-status-duplicate-input 200 status.json 0 '/api/v2/remote-jobs/status?ids=123456,123456,123457,123458' status 123456 123456 123457 123458
+single_transport status-wrong-id-response 200 status.json 6 '/api/v2/remote-jobs/status?ids=123456' status 123456
+single_transport transport-locations 200 locations.json 0 '/api/v2/remote-jobs?get=locations' locations
+single_transport transport-industries 200 industries.json 0 '/api/v2/remote-jobs?get=industries' industries
+expect invalid-test-origin 2 env JOBICY_TEST_MODE=synthetic JOBICY_TEST_ENDPOINT=https://example.invalid/api/v2/remote-jobs "$program" search
+setvar port += 1
+expect failed-transport 5 env JOBICY_TEST_MODE=synthetic JOBICY_TEST_ENDPOINT="http://127.0.0.1:$port/api/v2/remote-jobs" "$program" search
+expect zero-status-id 2 "$program" status 0
+expect invalid-status-id 2 "$program" status abc
+expect missing-status-id 2 "$program" status
+mkdir "$temporary/sync"
+printf '%s\n' "$(date +%s)" > "$temporary/sync/synchronization-start"
+expect hourly-sync-guard 8 "$program" search --sync --evidence-dir "$temporary/sync"
+no_rows
+printf 'PASS\tassertions=%s\tinstalled-program=%s\tevidence=%s\n' "$checks" "$program" "$temporary"

@@ -1,0 +1,14 @@
+{
+  "apiVersion": "2.2.19",
+  "documentationUrl": "https://jobicy.com/jobs-rss-feed",
+  "jobCount": 0,
+  "lastUpdate": "",
+  "nextCursor": null,
+  "hasMore": false,
+  "appliedFilters": {
+    "count": 20
+  },
+  "jobs": [],
+  "statusCode": 200,
+  "success": true
+}
