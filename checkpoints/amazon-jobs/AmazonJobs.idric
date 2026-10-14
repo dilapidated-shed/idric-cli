@@ -43,6 +43,7 @@ record Job where
   basic_qualifications : Text
   preferred_qualifications : Text
   link : Text
+  source_record : JSON
 
 initial_options : SearchOptions
 initial_options =
@@ -211,6 +212,7 @@ job_from_json raw =
        (plain_qualifications (field_text "basic_qualifications" raw))
        (plain_qualifications (field_text "preferred_qualifications" raw))
        full_link
+       raw
 
 -- Extract explicit quantities near 'year(s)' from the English basic
 -- qualifications. This is deliberately a heuristic, not a credential oracle.
@@ -389,6 +391,7 @@ job_json job = JObject
   , ("basic_qualifications", JString (basic_qualifications job))
   , ("preferred_qualifications", JString (preferred_qualifications job))
   , ("url", JString (link job))
+  , ("source_record", source_record job)
   ]
 
 tsv_text : Text → Text
