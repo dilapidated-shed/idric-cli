@@ -21,8 +21,8 @@ The command does not infer that one posting represents one hire.
 
 The search preserves `business_category` and `team` **as Amazon feed labels**,
 not a verified hierarchy. `source_record_id` is separate from the numeric
-public requisition ID. The JSONL output also includes job description and
-qualification text. `--max-years` is only a heuristic against explicit
+public requisition ID. JSON/JSONL output retains the complete original returned `source_record` beside
+normalized fields, plus the description and qualification text. `--max-years` is only a heuristic against explicit
 year requirements and does not establish that a job is genuinely entry level.
 Missing basic qualifications exclude jobs from its experience-filtered output.
 
