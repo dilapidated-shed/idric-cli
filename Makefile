@@ -52,7 +52,7 @@ nhtsa-vin:
 	test -n "$(ICU_ROOT)" && test -f "$(ICU_ROOT)/native/transport.c"
 	"$(IDRIC)" --build nhtsa-vin.ipkg
 	test -d build/exec/nhtsa-vin_app
-	"$(ICK)" $(ICK_FLAGS) -std=c11 -O2 -Wall -Wextra -Werror -fPIC -shared \
+	"$(ICK)" -fno-link-libatomic $(ICK_FLAGS) -std=c11 -O2 -Wall -Wextra -Werror -fPIC -shared \
 		"$(ICU_ROOT)/native/transport.c" \
 		-o build/exec/nhtsa-vin_app/libicu_transport.so -lssl -lcrypto
 	test -x build/exec/nhtsa-vin
