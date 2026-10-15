@@ -1,0 +1,7 @@
+package nhtsa_vin
+version = 0.1.0
+depends = contrib, idric_net, icu_response
+sourcedir = "checkpoints/nhtsa/idric"
+modules = Nhtsa
+main = Nhtsa
+executable = nhtsa-vin
