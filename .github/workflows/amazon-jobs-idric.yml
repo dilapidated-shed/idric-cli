@@ -1,0 +1,63 @@
+name: Amazon.jobs Idriç acceptance
+
+on:
+  pull_request:
+  push:
+    branches: [cli]
+
+permissions:
+  contents: read
+
+jobs:
+  amazon-jobs-idric:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Checkout exact source head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Checkout pinned Idriç compiler
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: isomorphisms/Idric
+          ref: e8b9173ab2d840ef0cf212698ea2fee97bd9e807
+          path: Idric
+          persist-credentials: false
+
+      - name: Bootstrap checked compiler and contrib
+        shell: bash
+        run: |
+          set -euo pipefail
+          export JOBS=2
+          cd Idric
+          ./edric all
+
+      - name: Compile and execute Amazon.jobs fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/Idric/.tools/bin:$PATH"
+          export IDRIS2_PREFIX="$PWD/Idric/bootstrap-build"
+          export IDRIS2_PATH="$PWD/Idric/_/libs/contrib/build/ttc:$PWD/Idric/_/libs/base/build/ttc"
+          ./Idric/build/exec/idris2 --version
+          ./Idric/build/exec/idris2 -p contrib checkpoints/amazon-jobs/AmazonJobs.idric -o amazon-jobs
+          ./build/exec/amazon-jobs --self-test
+          ./build/exec/amazon-jobs --help | grep -F -- '--all'
+          sha256sum checkpoints/amazon-jobs/AmazonJobs.idric build/exec/amazon-jobs
+
+      - name: Check fail-closed arguments without a network request
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ./build/exec/amazon-jobs --all --max-years 0; then
+            echo 'FAIL: census accepted a silently narrowed denominator' >&2
+            exit 1
+          fi
+          if ./build/exec/amazon-jobs --format nonsense; then
+            echo 'FAIL: unknown output format accepted' >&2
+            exit 1
+          fi
