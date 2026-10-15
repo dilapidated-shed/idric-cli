@@ -6,6 +6,8 @@ This repository is the consolidation point for the CLI/API-access programs that 
 
 ## Current programs
 
+- `amazon-jobs` — Idriç Amazon.jobs requisition search and bounded Software Development census, retaining business/team metadata and public numeric requisition IDs. See [`checkpoints/amazon-jobs/README.md`](checkpoints/amazon-jobs/README.md). Live retrieval depends on Amazon's public endpoint and successful HTTPS access; it is not verified by fixture tests.
+
 - `jobicy` — executable Idriç Jobicy public remote-job CLI: bounded cursor
   traversal, complete descriptions, status/taxonomy commands, TSV/JSONL output,
   and installed-command tests. See `checkpoints/jobicy/README.md` for executed
