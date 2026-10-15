@@ -1,0 +1,21 @@
+{
+  "Count": 1,
+  "Message": "Synthetic test fixture, not an NHTSA observation",
+  "SearchCriteria": "VIN:1HGCM82633A004352",
+  "Results": [{
+    "VIN": "1HGCM82633A004352",
+    "ModelYear": "2003",
+    "Make": "HONDA",
+    "Model": "Accord",
+    "Trim": "",
+    "Series": null,
+    "BodyClass": "Coupe",
+    "DriveType": "FWD/Front-Wheel Drive",
+    "EngineCylinders": "6",
+    "DisplacementL": "3.0",
+    "FuelTypePrimary": "Gasoline",
+    "PlantCountry": "UNITED STATES (USA)",
+    "ErrorCode": "0",
+    "ErrorText": "synthetic fixture; not a provider decode"
+  }]
+}

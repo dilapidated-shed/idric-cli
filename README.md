@@ -23,6 +23,7 @@ This repository is the consolidation point for the CLI/API-access programs that 
 - `Reddit.idric` — Reddit Data API checkpoint, with a synthetic fixture and manual receipt.
 - `Sec.idric` — SEC EDGAR public-data checkpoint: submissions, XBRL facts/frames, ticker maps, and bulk archives.
 - `Stripe.idric` — Stripe API checkpoint; first slice is pinned, read-only Balance access with a synthetic fixture and manual receipt.
+- `nhtsa-vin` — typed Idriç NHTSA vPIC vehicle decoder using ICU captured HTTPS responses; see [NHTSA command](checkpoints/nhtsa/README.md).
 - `Reuters.idric` — Reuters GraphQL checkpoint.
 - `Wayback.idric` — Internet Archive Wayback/CDX checkpoint.
 
