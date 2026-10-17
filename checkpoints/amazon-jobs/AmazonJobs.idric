@@ -380,9 +380,13 @@ collect_jobs options (S pages_left) offset expected seen selected_reversed scann
               let (next_seen, next_selected) =
                 choose_jobs options batch seen selected_reversed
               let next_scanned = scanned + length batch
-              let finished = next_scanned >= hits || (not (complete_census options) &&
-                (length batch < page_size options ||
-                 length next_selected >= result_limit options))
+              let page_is_short = length batch < page_size options
+              let requested_limit_reached = length next_selected >= result_limit options
+              let reached_reported_hits = next_scanned >= hits
+              let finished = if complete_census options
+                               then reached_reported_hits
+                               else reached_reported_hits || page_is_short ||
+                                    requested_limit_reached
               if finished || isNil batch
                 then pure (complete_result options (Just hits) next_selected next_scanned)
                 else do
