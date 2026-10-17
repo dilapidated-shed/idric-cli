@@ -35,6 +35,13 @@ jobs:
           export JOBS=2
           cd Idric
           ./edric all
+          # Bootstrap installs only the core libraries. The CLI imports
+          # Language.JSON, which belongs to contrib, so install that package
+          # explicitly into the SAME compiler prefix before compiling.
+          make -C _/libs/contrib install \
+            IDRIS2="$PWD/build/exec/idris2" \
+            IDRIS2_PREFIX="$PWD/bootstrap-build" \
+            IDRIS2_PATH="$PWD/_/libs/contrib/build/ttc:$PWD/_/libs/base/build/ttc"
 
       - name: Compile and execute Amazon.jobs fixture
         shell: bash
