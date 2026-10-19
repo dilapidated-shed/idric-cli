@@ -487,18 +487,18 @@ covering
 main : IO ()
 main = do
   arguments ← getArgs
-  let parameters = case arguments of
+  let command_arguments = case arguments of
         [] ⇒ []
         _ :: rest ⇒ rest
-  if elem "--help" parameters || elem "-h" parameters
+  if elem "--help" command_arguments || elem "-h" command_arguments
     then putStrLn usage
-    else if elem "--self-test" parameters
+    else if elem "--self-test" command_arguments
       then if offline_checks
         then putStrLn "PASS: JSON, job normalization, and experience filtering"
         else do
           ignore $ fPutStrLn stderr "FAIL: offline checks"
           exitFailure
-      else case parse_options parameters of
+      else case parse_options command_arguments of
         Left problem ⇒ do
           ignore $ fPutStrLn stderr ("amazon-jobs: " ++ problem ++ "\n" ++ usage)
           exitFailure
