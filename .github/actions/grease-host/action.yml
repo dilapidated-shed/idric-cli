@@ -33,3 +33,6 @@ runs:
     - shell: bash
       working-directory: .acceptance/grease
       run: sha256sum --check "${{ github.workspace }}/ci/grease-runtime.sha256"
+    - name: Register the verified Grease command for later custom-shell steps
+      shell: bash
+      run: echo "$GITHUB_WORKSPACE/.acceptance/grease/bin" >> "$GITHUB_PATH"
