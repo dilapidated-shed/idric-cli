@@ -44,7 +44,7 @@ jobs:
         env:
           CC: ${{ steps.ick.outputs.compiler }}
           CFLAGS: -fno-link-libatomic -static-libgcc
-        shell: .acceptance/grease/bin/grease {0}
+        shell: ${{ github.workspace }}/.acceptance/grease/bin/grease {0}
         run: env PATH="$PWD/Idric/.tools/bin:$PATH" .acceptance/grease/bin/grease ci/amazon-jobs-acceptance.grease bootstrap
 
       - name: Compile and execute Amazon.jobs fixture
@@ -109,7 +109,7 @@ jobs:
       - name: Run maintained build, Cat Food installation, independent AICI and provider stages
         env:
           ICK: ${{ steps.ick.outputs.compiler }}
-        shell: .acceptance/grease/bin/grease {0}
+        shell: ${{ github.workspace }}/.acceptance/grease/bin/grease {0}
         run: env PATH="$PWD/Idric/.tools/bin:$PATH" .acceptance/grease/bin/grease ci/amazon-jobs-acceptance.grease accept
 
       - name: Retain actual stage outputs even when the provider refuses
@@ -118,4 +118,5 @@ jobs:
         with:
           name: amazon-jobs-acceptance-${{ github.event.pull_request.head.sha || github.sha }}
           path: .acceptance/receipts/
+          include-hidden-files: true
           if-no-files-found: warn
