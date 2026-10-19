@@ -64,12 +64,12 @@ jobs:
         env:
           CC: ${{ steps.ick.outputs.compiler }}
           CFLAGS: -fno-link-libatomic -static-libgcc
-        shell: .acceptance/grease/bin/grease {0}
+        shell: ${{ github.workspace }}/.acceptance/grease/bin/grease {0}
         run: env PATH="$PWD/Idric/.tools/bin:$PATH" .acceptance/grease/bin/grease ci/nhtsa-vin-acceptance.grease bootstrap
       - name: Execute maintained installed, independent and provider stages
         env:
           ICK: ${{ steps.ick.outputs.compiler }}
-        shell: .acceptance/grease/bin/grease {0}
+        shell: ${{ github.workspace }}/.acceptance/grease/bin/grease {0}
         run: env PATH="$PWD/Idric/.tools/bin:$PATH" .acceptance/grease/bin/grease ci/nhtsa-vin-acceptance.grease accept
       - name: Retain actual stage outputs even when the provider refuses
         if: always()
@@ -77,4 +77,5 @@ jobs:
         with:
           name: nhtsa-vin-acceptance-${{ github.event.pull_request.head.sha || github.sha }}
           path: .acceptance/receipts/
+          include-hidden-files: true
           if-no-files-found: warn
