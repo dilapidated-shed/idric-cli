@@ -2,3 +2,6 @@ config/amazon-secret
 .state/
 .cache/
 build/
+.acceptance/
+Idric/
+.ick-host-source/

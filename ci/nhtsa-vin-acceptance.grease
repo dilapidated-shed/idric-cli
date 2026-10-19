@@ -1,0 +1,53 @@
+#!/usr/bin/env grease
+# Requirements: exact clean source heads, the declared Idriç packages in one
+# compiler prefix, qualified ICK, maintained Kitchen installation/tests and the
+# independent AICI oracle. Live provider results must remain separate receipts.
+if (int($#) !== 1) {
+  echo 'usage: nhtsa-vin-acceptance.grease bootstrap|accept' >&2
+  exit 2
+}
+var root = "$(git rev-parse --show-toplevel)"
+var compiler = "$root/Idric/build/exec/idris2"
+var mode = $1
+if (mode === 'bootstrap') {
+  cd -- "$root/Idric"
+  env JOBS=2 ./edric all
+  make -C _/libs/contrib install IDRIS2="$compiler" \
+    IDRIS2_PREFIX="$root/Idric/bootstrap-build" \
+    IDRIS2_PATH="$root/Idric/_/libs/contrib/build/ttc:$root/Idric/_/libs/base/build/ttc"
+  cd -- "$root/.acceptance/net"
+  "$compiler" --install idric-net.ipkg
+  cd -- "$root/.acceptance/icu"
+  "$compiler" --install icu-response.ipkg
+} elif (mode === 'accept') {
+  var head = "$(git -C "$root" rev-parse HEAD)"
+  var grease = "$root/.acceptance/grease/bin/grease"
+  test -x "$compiler"
+  test -x "$ICK"
+  cd -- "$root/.acceptance/fp"
+  ./scripts/run-pipeline nhtsa-vin-acceptance \
+    --runs-root "$root/.acceptance/receipts" \
+    --param "grease=$grease" \
+    --param "cli-root=$root" --param "cli-head=$head" \
+    --param "icu-root=$root/.acceptance/icu" \
+    --param icu-head=468355b780d17f9b0838c8ac975962596811c484 \
+    --param "idric=$compiler" --param "idric-root=$root/Idric" \
+    --param idric-head=e8b9173ab2d840ef0cf212698ea2fee97bd9e807 \
+    --param "idric-json-root=$root/Idric" \
+    --param idric-json-head=e8b9173ab2d840ef0cf212698ea2fee97bd9e807 \
+    --param "idric-net-root=$root/.acceptance/net" \
+    --param idric-net-head=2f6ea92c25c9b5a7286d1ca226fa3d1e12fe303e \
+    --param "ick=$ICK" --param "ick-root=$root/.ick-host-source" \
+    --param ick-head=c61e448251744a2f40ad743ebef1a027bdcd2f9d \
+    --param "kitchen-task=$root/.acceptance/kitchen/tasks/nhtsa-vin/1.grease" \
+    --param "kitchen-root=$root/.acceptance/kitchen" \
+    --param kitchen-head=1268229b5eef24010d54729e0f79f71cf3a6eb19 \
+    --param "install-prefix=$root/.acceptance/installed" \
+    --param "program=$root/.acceptance/installed/bin/nhtsa-vin" \
+    --param "aici-root=$root/.acceptance/aici" \
+    --param aici-head=57c1f42ebc011e7d449b4c3f0bdd715677a2a6f5 \
+    --param "aici-oracle=$root/.acceptance/aici/nhtsa/vin-cli-acceptance.sh"
+} else {
+  echo 'mode must be bootstrap or accept' >&2
+  exit 2
+}

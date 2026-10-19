@@ -1,0 +1,80 @@
+name: NHTSA VIN installed-command acceptance
+on:
+  pull_request:
+  push:
+    branches: [cli]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  nhtsa-vin:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      ASAN_OPTIONS: detect_leaks=0
+      IDRIS2_PREFIX: ${{ github.workspace }}/Idric/bootstrap-build
+      IDRIS2_PATH: ${{ github.workspace }}/Idric/_/libs/contrib/build/ttc:${{ github.workspace }}/Idric/_/libs/base/build/ttc
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Stage the recorded Grease host compatibility runtime
+        uses: ./.github/actions/grease-host
+      - name: Qualify the declared ICK compiler
+        id: ick
+        uses: isomorphisms/ai-ci/ick-host@903b2cb27ea572c9c6cb2ffa9f39e0fbf06ec9f8
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: isomorphisms/Idric
+          ref: e8b9173ab2d840ef0cf212698ea2fee97bd9e807
+          path: Idric
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: dilapidated-shed/Idric-Net
+          ref: 2f6ea92c25c9b5a7286d1ca226fa3d1e12fe303e
+          path: .acceptance/net
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: dilapidated-shed/icu
+          ref: 468355b780d17f9b0838c8ac975962596811c484
+          path: .acceptance/icu
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: isomorphisms/kitchen
+          ref: 1268229b5eef24010d54729e0f79f71cf3a6eb19
+          path: .acceptance/kitchen
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: isomorphisms/ai-ci
+          ref: 57c1f42ebc011e7d449b4c3f0bdd715677a2a6f5
+          path: .acceptance/aici
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: isomorphisms/flexible-pipes
+          ref: e9698734a273e8cb206c043bd981a0bb03e1b3e8
+          path: .acceptance/fp
+          persist-credentials: false
+      - name: Build the exact compiler and its contrib, Idric-Net and ICU packages
+        env:
+          CC: ${{ steps.ick.outputs.compiler }}
+          CFLAGS: -fno-link-libatomic -static-libgcc
+        shell: .acceptance/grease/bin/grease {0}
+        run: env PATH="$PWD/Idric/.tools/bin:$PATH" .acceptance/grease/bin/grease ci/nhtsa-vin-acceptance.grease bootstrap
+      - name: Execute maintained installed, independent and provider stages
+        env:
+          ICK: ${{ steps.ick.outputs.compiler }}
+        shell: .acceptance/grease/bin/grease {0}
+        run: env PATH="$PWD/Idric/.tools/bin:$PATH" .acceptance/grease/bin/grease ci/nhtsa-vin-acceptance.grease accept
+      - name: Retain actual stage outputs even when the provider refuses
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nhtsa-vin-acceptance-${{ github.event.pull_request.head.sha || github.sha }}
+          path: .acceptance/receipts/
+          if-no-files-found: warn
