@@ -4,6 +4,7 @@ import Data.Text
 import Data.Maybe
 import Language.JSON
 import System
+import System.File
 
 -- Amazon.jobs is a public site, not a promised stable API. HTTPS fetching
 -- remains a narrow curl subprocess boundary; filtering is entirely Idriç.
@@ -73,8 +74,9 @@ positive_number : Text → Either Text Number
 positive_number value =
   case parsePositive value of
     Nothing ⇒ Left ("expected a positive whole number: " ++ value)
-    Just Z ⇒ Left ("expected a positive whole number: " ++ value)
-    Just number ⇒ Right number
+    Just number ⇒ if number == 0
+      then Left ("expected a positive whole number: " ++ value)
+      else Right number
 
 nonnegative_number : Text → Either Text Number
 nonnegative_number value =
