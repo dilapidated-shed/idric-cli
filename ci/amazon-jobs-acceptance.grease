@@ -1,0 +1,50 @@
+#!/usr/bin/env grease
+# Requirements: the exact source checkout, recorded Grease host runtime, pinned
+# Idriç compiler with its own contrib, qualified ICK, and accepted FP/Kn/CF/AICI
+# checkouts. A real provider refusal must remain a failing provider stage.
+if (int($#) !== 1) {
+  echo 'usage: amazon-jobs-acceptance.grease bootstrap|accept' >&2
+  exit 2
+}
+var root = "$(git rev-parse --show-toplevel)"
+var compiler = "$root/Idric/build/exec/idris2"
+var mode = $1
+if (mode === 'bootstrap') {
+  cd -- "$root/Idric"
+  env JOBS=2 ./edric all
+  make -C _/libs/contrib install IDRIS2="$compiler" \
+    IDRIS2_PREFIX="$root/Idric/bootstrap-build" \
+    IDRIS2_PATH="$root/Idric/_/libs/contrib/build/ttc:$root/Idric/_/libs/base/build/ttc"
+} elif (mode === 'accept') {
+  var head = "$(git -C "$root" rev-parse HEAD)"
+  var grease = "$root/.acceptance/grease/bin/grease"
+  test -x "$compiler"
+  test -x "$ICK"
+  mkdir -p "$root/.acceptance/workspace" "$root/.acceptance/bin"
+  # Cat Food owns the stable command link; this only gives it the exact source.
+  ln -s "$root" "$root/.acceptance/workspace/idric-cli"
+  "$ICK" -fno-link-libatomic -std=c17 -Wall -Wextra -Werror -pedantic -O2 \
+    "$root/.acceptance/aici/src/aici.c" -o "$root/.acceptance/bin/aici"
+  cd -- "$root/.acceptance/aici"
+  "$root/.acceptance/bin/aici" self-test tests/cases.tsv
+  cd -- "$root/.acceptance/fp"
+  ./scripts/run-pipeline amazon-jobs-org-audit \
+    --runs-root "$root/.acceptance/receipts" \
+    --param "program=$root/.acceptance/workspace/bin/amazon-jobs" \
+    --param "cli-source=$root/checkpoints/amazon-jobs/AmazonJobs.idric" \
+    --param "cli-root=$root" \
+    --param "cli-head=$head" \
+    --param "catfood-manifest=$root/.acceptance/catfood/tools.tsv" \
+    --param "historic-snapshot=$root/.acceptance/blackball/FAANG/amazon/inventory/2026-09-16T155726Z/jobs.tsv" \
+    --param "aici=$root/.acceptance/bin/aici" \
+    --param "aici-contract=$root/.acceptance/aici/contracts/amazon-jobs-cli-v0.contract.tsv" \
+    --param "aici-source=$root/.acceptance/aici/src/aici.c" \
+    --param "grease=$grease" \
+    --param "kitchen-task=$root/.acceptance/kitchen/tasks/amazon-jobs-cli/2.grease" \
+    --param "idric-compiler=$compiler" \
+    --param "catfood-update=$root/.acceptance/catfood/update-tools.ysh" \
+    --param "catfood-workspace=$root/.acceptance/workspace"
+} else {
+  echo 'mode must be bootstrap or accept' >&2
+  exit 2
+}

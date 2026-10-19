@@ -2,3 +2,7 @@ config/amazon-secret
 .state/
 .cache/
 build/
+# Source-pinned host acceptance dependencies, runtime, and receipts.
+.acceptance/
+Idric/
+.ick-host-source/
