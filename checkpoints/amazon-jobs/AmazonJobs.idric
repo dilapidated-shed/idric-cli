@@ -265,7 +265,8 @@ exceeds_years maximum (first :: "to" :: upper :: unit :: rest) =
   if year_unit unit && (number_exceeds maximum first || number_exceeds maximum upper)
     then True else exceeds_years maximum ("to" :: upper :: unit :: rest)
 exceeds_years maximum (first :: second :: unit :: rest) =
-  if year_unit unit && (number_exceeds maximum first || number_exceeds maximum second)
+  if (year_unit second && number_exceeds maximum first) ||
+     (year_unit unit && (number_exceeds maximum first || number_exceeds maximum second))
     then True else exceeds_years maximum (second :: unit :: rest)
 exceeds_years maximum (amount :: unit :: rest) =
   if year_unit unit && number_exceeds maximum amount
@@ -482,6 +483,8 @@ offline_checks =
             Left _ ⇒ True
             Right _ ⇒ False) &&
          exceeds_years 0 (qualification_words "2 to 4 years") &&
+         exceeds_years 0 (qualification_words "3+ years required") &&
+         exceeds_years 2 (qualification_words "3 years of experience") &&
          not (exceeds_years 2 (qualification_words "1 year"))
     _ ⇒ False
 
