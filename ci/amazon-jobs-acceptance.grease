@@ -29,7 +29,7 @@ if (mode === 'bootstrap') {
   cd -- "$root/.acceptance/aici"
   "$root/.acceptance/bin/aici" self-test tests/cases.tsv
   cd -- "$root/.acceptance/fp"
-  ./scripts/run-pipeline amazon-jobs-org-audit \
+  python3 ./scripts/run-pipeline amazon-jobs-org-audit \
     --runs-root "$root/.acceptance/receipts" \
     --param "program=$root/.acceptance/workspace/bin/amazon-jobs" \
     --param "cli-source=$root/checkpoints/amazon-jobs/AmazonJobs.idric" \
