@@ -40,3 +40,9 @@ a green compiler job cannot clear a failing installed/provider job.
 No physical A1/C67, APK publication, release, private provider account or
 installed interactive-device acceptance is claimed here.
 
+
+Publication observation: the Git transport and branch-ref API showed the
+repaired commit, while the PR head and workflow list still showed its
+predecessor. That observation is not a current-head run or a passing check.
+This normal contents commit records the mismatch without force, branch
+replacement, approval fabrication or retirement of the PR.
