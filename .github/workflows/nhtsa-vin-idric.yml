@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: isomorphisms/Idric
-          ref: e8b9173ab2d840ef0cf212698ea2fee97bd9e807
+          ref: a5398b6cf385a78bd203bc0499da0c5da6fb3714
           path: Idric
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683

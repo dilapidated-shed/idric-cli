@@ -36,9 +36,9 @@ if (mode === 'bootstrap') {
     --param "icu-root=$root/.acceptance/icu" \
     --param icu-head=468355b780d17f9b0838c8ac975962596811c484 \
     --param "idric=$compiler" --param "idric-root=$root/Idric" \
-    --param idric-head=e8b9173ab2d840ef0cf212698ea2fee97bd9e807 \
+    --param idric-head=a5398b6cf385a78bd203bc0499da0c5da6fb3714 \
     --param "idric-json-root=$root/Idric" \
-    --param idric-json-head=e8b9173ab2d840ef0cf212698ea2fee97bd9e807 \
+    --param idric-json-head=a5398b6cf385a78bd203bc0499da0c5da6fb3714 \
     --param "idric-net-root=$root/.acceptance/net" \
     --param idric-net-head=2f6ea92c25c9b5a7286d1ca226fa3d1e12fe303e \
     --param "ick=$ick" --param "ick-root=$root/.ick-host-source" \
