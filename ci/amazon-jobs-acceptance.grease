@@ -16,14 +16,15 @@ if (mode === 'bootstrap') {
     IDRIS2_PREFIX="$root/Idric/bootstrap-build" \
     IDRIS2_PATH="$root/Idric/_/libs/contrib/build/ttc:$root/Idric/_/libs/base/build/ttc"
 } elif (mode === 'accept') {
+  var ick = get(ENV, 'ICK') or ''
   var head = "$(git -C "$root" rev-parse HEAD)"
   var grease = "$root/.acceptance/grease/bin/grease"
   test -x "$compiler"
-  test -x "$ICK"
+  test -x "$ick"
   mkdir -p "$root/.acceptance/workspace" "$root/.acceptance/bin"
   # Cat Food owns the stable command link; this only gives it the exact source.
   ln -s "$root" "$root/.acceptance/workspace/idric-cli"
-  "$ICK" -fno-link-libatomic -std=c17 -Wall -Wextra -Werror -pedantic -O2 \
+  "$ick" -fno-link-libatomic -std=c17 -Wall -Wextra -Werror -pedantic -O2 \
     "$root/.acceptance/aici/src/aici.c" -o "$root/.acceptance/bin/aici"
   cd -- "$root/.acceptance/aici"
   "$root/.acceptance/bin/aici" self-test tests/cases.tsv

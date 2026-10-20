@@ -10,7 +10,13 @@ permissions:
   actions: read
 
 jobs:
+  qualified-ick:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Qualify and retain the exact compiler before consumer execution
+        uses: isomorphisms/ai-ci/ick-host@903b2cb27ea572c9c6cb2ffa9f39e0fbf06ec9f8
   amazon-jobs-idric:
+    needs: qualified-ick
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -45,7 +51,7 @@ jobs:
           CC: ${{ steps.ick.outputs.compiler }}
           CFLAGS: -fno-link-libatomic -static-libgcc
         shell: grease {0}
-        run: env PATH="$PWD/Idric/.tools/bin:$PATH" .acceptance/grease/bin/grease ci/amazon-jobs-acceptance.grease bootstrap
+        run: env PATH="${{ github.workspace }}/Idric/.tools/bin:$[ENV.PATH]" .acceptance/grease/bin/grease ci/amazon-jobs-acceptance.grease bootstrap
 
       - name: Compile and execute Amazon.jobs fixture
         shell: bash
@@ -110,7 +116,7 @@ jobs:
         env:
           ICK: ${{ steps.ick.outputs.compiler }}
         shell: grease {0}
-        run: env PATH="$PWD/Idric/.tools/bin:$PATH" .acceptance/grease/bin/grease ci/amazon-jobs-acceptance.grease accept
+        run: env PATH="${{ github.workspace }}/Idric/.tools/bin:$[ENV.PATH]" .acceptance/grease/bin/grease ci/amazon-jobs-acceptance.grease accept
 
       - name: Retain actual stage outputs even when the provider refuses
         if: always()
