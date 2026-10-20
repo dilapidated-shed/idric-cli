@@ -42,3 +42,11 @@ and a source-bound Flexible Pipes job with ai-ci acceptance receipts. A
 live provider attempt is separate and its failure is never an empty successful
 census. Historical reference snapshot:
 [Blackball's September 16, 2026 Amazon census](https://github.com/bl4ckb4ll/blackball/tree/main/FAANG/amazon).
+
+When `AMAZON_JOBS_FAILURE_RESPONSE` names a writable evidence file, a failed
+parse or HTTPS process preserves its complete stdout there and the request,
+offset, process status and refusal in a `.request.tsv` companion. It still
+exits nonzero and supplies no accepted census. The maintained pipeline sets
+this path inside its retained receipts. Without the variable no file is
+written. These public-response diagnostics help distinguish provider bytes
+from parser behavior; they do not establish an HTTP status code.

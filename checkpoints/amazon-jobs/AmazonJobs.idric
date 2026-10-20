@@ -319,13 +319,44 @@ search_parameters options offset =
 
 -- System.run reads the complete child stdout and reports its exit status.
 -- escapeCmd makes each CLI argument one shell word, including quoted searches.
+-- Retain only a failed response when the caller supplies an evidence path.
+-- A captured response is diagnostic material, never an accepted census.
+preserve_failed_response : SearchOptions → Number → Int → Text → Text → IO Text
+preserve_failed_response options offset status response problem = do
+  destination ← getEnv "AMAZON_JOBS_FAILURE_RESPONSE"
+  case destination of
+    Nothing ⇒ pure problem
+    Just path ⇒ do
+      written ← writeFile path response
+      case written of
+        Left file_error ⇒
+          pure (problem ++ "; failed to retain response: " ++ show file_error)
+        Right () ⇒ do
+          context ← writeFile (path ++ ".request.tsv") (unlines
+            [ "curl_process_status\t" ++ show status
+            , "offset\t" ++ show offset
+            , "request\t" ++ escapeCmd (search_parameters options offset)
+            , "refusal\t" ++ problem
+            ])
+          case context of
+            Left file_error ⇒
+              pure (problem ++ "; retained response but failed to retain request: " ++ show file_error)
+            Right () ⇒ pure (problem ++ "; failed response retained at " ++ path)
+
 covering
 fetch_jobs : SearchOptions → Number → IO (Either Text (List JSON, Number))
 fetch_jobs options offset = do
   (response, status) ← System.run (escapeCmd (search_parameters options offset))
   if status ≟ 0
-    then pure (jobs_in_response response)
-    else pure (Left ("HTTPS request failed (curl process status " ++ show status ++ ")"))
+    then case jobs_in_response response of
+      Right parsed ⇒ pure (Right parsed)
+      Left problem ⇒ do
+        retained ← preserve_failed_response options offset status response problem
+        pure (Left retained)
+    else do
+      retained ← preserve_failed_response options offset status response
+        ("HTTPS request failed (curl process status " ++ show status ++ ")")
+      pure (Left retained)
 
 choose_jobs : SearchOptions → List JSON → List Text → List Job → (List Text, List Job)
 choose_jobs options [] seen selected_reversed = (seen, selected_reversed)

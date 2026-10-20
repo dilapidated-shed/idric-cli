@@ -1,0 +1,263 @@
+module Nhtsa
+
+import Data.List
+import Data.Maybe
+import Data.Text
+import Language.JSON
+import Network.HTTP
+import Network.URL
+import Response
+import System
+import System.File
+
+%default covering
+
+-- Validation happens before a VIN enters a URL. Do not interpret an invalid
+-- check digit as a transport error: vPIC supplies its own ErrorCode/ErrorText.
+record VIN where
+  constructor MakeVIN
+  digits : Text
+
+record Vehicle where
+  constructor MakeVehicle
+  vin : VIN
+  model_year : Maybe Text
+  make : Maybe Text
+  model : Maybe Text
+  trim : Maybe Text
+  series : Maybe Text
+  body_class : Maybe Text
+  drive_type : Maybe Text
+  engine_cylinders : Maybe Text
+  displacement_l : Maybe Text
+  fuel_type : Maybe Text
+  plant_country : Maybe Text
+  error_code : Maybe Text
+  error_text : Maybe Text
+
+data OutputFormat = Plain | TSV
+
+record Problem where
+  constructor MakeProblem
+  exit_code : Int
+  message : Text
+
+usage : Text
+usage = "nhtsa-vin 0.1.0\n" ++
+  "  nhtsa-vin decode VIN [--modelyear YYYY] [--tsv]\n" ++
+  "  nhtsa-vin url VIN [--modelyear YYYY]\n" ++
+  "  nhtsa-vin fixture VIN JSON_FILE [--tsv]\n" ++
+  "  nhtsa-vin help | --help | --version\n" ++
+  "17-character VINs only. HTTP uses ICU/Idric-Net. Empty and missing fields remain distinct."
+
+fail : Problem → IO ()
+fail issue = do
+  _ ← fPutStrLn stderr ("nhtsa-vin: " ++ issue.message)
+  case issue.exit_code of
+    2 ⇒ exitWith (ExitFailure 2)
+    4 ⇒ exitWith (ExitFailure 4)
+    5 ⇒ exitWith (ExitFailure 5)
+    6 ⇒ exitWith (ExitFailure 6)
+    7 ⇒ exitWith (ExitFailure 7)
+    8 ⇒ exitWith (ExitFailure 8)
+    _ ⇒ exitFailure
+
+vin_character : Char → Bool
+vin_character character =
+  ((character >= 'A' && character <= 'Z') ||
+   (character >= '0' && character <= '9')) &&
+  not (elem character ['I', 'O', 'Q'])
+
+validate_vin : Text → Either Problem VIN
+validate_vin supplied =
+  let canonical = pack (map toUpper (unpack supplied)) in
+  if length canonical ≟ 17 && all vin_character (unpack canonical)
+  then Right (MakeVIN canonical)
+  else Left (MakeProblem 2 "VIN must have 17 ASCII letters/digits excluding I, O, Q")
+
+validate_year : Text → Either Problem Text
+validate_year supplied =
+  let year : Int = cast supplied in
+  if length supplied ≟ 4 && all isDigit (unpack supplied) &&
+     year >= 1900 && year <= 2100
+  then Right supplied
+  else Left (MakeProblem 2 "model year must be four digits from 1900 through 2100")
+
+decode_url : VIN → Maybe Text → Text
+decode_url vin Nothing =
+  "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/" ++ vin.digits ++ "?format=json"
+decode_url vin (Just year) =
+  "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/" ++ vin.digits ++ "?format=json&modelyear=" ++ year
+
+field : Text → JSON → Maybe JSON
+field name value = Language.JSON.Data.lookup name value
+
+-- Nothing is absent/null. Just "" means the provider sent an empty string.
+-- Invalid field types fail; they are not silently converted to strings.
+field_text : Text → JSON → Either Problem (Maybe Text)
+field_text name object =
+  case field name object of
+    Nothing ⇒ Right Nothing
+    Just JNull ⇒ Right Nothing
+    Just (JString value) ⇒ Right (Just value)
+    _ ⇒ Left (MakeProblem 6 ("invalid provider type for " ++ name))
+
+decode_result : VIN → JSON → Either Problem Vehicle
+decode_result wanted result = do
+  actual ← field_text "VIN" result
+  case actual of
+    Just reported ⇒
+      if reported ≟ "" || reported ≟ wanted.digits then Right ()
+      else Left (MakeProblem 6 "provider VIN differs from requested VIN")
+    Nothing ⇒ Right ()
+  year ← field_text "ModelYear" result
+  make ← field_text "Make" result
+  model ← field_text "Model" result
+  trim ← field_text "Trim" result
+  series ← field_text "Series" result
+  body ← field_text "BodyClass" result
+  drive ← field_text "DriveType" result
+  cylinders ← field_text "EngineCylinders" result
+  displacement ← field_text "DisplacementL" result
+  fuel ← field_text "FuelTypePrimary" result
+  country ← field_text "PlantCountry" result
+  error_code ← field_text "ErrorCode" result
+  error_text ← field_text "ErrorText" result
+  case error_code of
+    Nothing ⇒ Left (MakeProblem 6 "provider response omits ErrorCode")
+    Just _ ⇒ Right (MakeVehicle wanted year make model trim series body drive
+                    cylinders displacement fuel country error_code error_text)
+
+decode_document : VIN → Text → Either Problem Vehicle
+decode_document wanted raw =
+  case Language.JSON.parse raw of
+    Nothing ⇒ Left (MakeProblem 6 "invalid provider JSON")
+    Just document ⇒
+      case field "Results" document of
+        Just (JArray [result@(JObject _)]) ⇒ decode_result wanted result
+        _ ⇒ Left (MakeProblem 6 "expected exactly one vPIC Results object")
+
+escape_cell : Text → Text
+escape_cell text = concatMap escaped (unpack text)
+  where
+    escaped : Char → Text
+    escaped '\\' = "\\\\"
+    escaped '\n' = "\\n"
+    escaped '\r' = "\\r"
+    escaped '\t' = "\\t"
+    escaped character = singleton character
+
+value_text : Maybe Text → Text
+value_text Nothing = "<missing>"
+value_text (Just value) = value
+
+plain_field : (Text, Maybe Text) → Text
+plain_field (name, value) = name ++ ": " ++ value_text value
+
+tsv_field : (Text, Maybe Text) → Text
+tsv_field (name, Nothing) = name ++ "\tmissing\t"
+tsv_field (name, Just value) = name ++ "\tpresent\t" ++ escape_cell value
+
+vehicle_fields : Vehicle → List (Text, Maybe Text)
+vehicle_fields vehicle =
+  [ ("VIN", Just vehicle.vin.digits)
+  , ("ModelYear", vehicle.model_year)
+  , ("Make", vehicle.make)
+  , ("Model", vehicle.model)
+  , ("Trim", vehicle.trim)
+  , ("Series", vehicle.series)
+  , ("BodyClass", vehicle.body_class)
+  , ("DriveType", vehicle.drive_type)
+  , ("EngineCylinders", vehicle.engine_cylinders)
+  , ("DisplacementL", vehicle.displacement_l)
+  , ("FuelTypePrimary", vehicle.fuel_type)
+  , ("PlantCountry", vehicle.plant_country)
+  , ("ErrorCode", vehicle.error_code)
+  , ("ErrorText", vehicle.error_text)
+  ]
+
+print_vehicle : OutputFormat → Text → Maybe Text → Vehicle → IO ()
+print_vehicle format evidence year_hint vehicle = do
+  let metadata =
+        [ ("Provider", Just "NHTSA vPIC")
+        , ("Evidence", Just evidence)
+        , ("URL", Just (decode_url vehicle.vin year_hint))
+        ]
+  let fields = metadata ++ vehicle_fields vehicle
+  traverse_ (putStrLn . (case format of Plain ⇒ plain_field; TSV ⇒ tsv_field)) fields
+
+run_fixture : VIN → Text → OutputFormat → IO ()
+run_fixture vin path format = do
+  body ← readFile path
+  case body of
+    Left _ ⇒ fail (MakeProblem 7 "unable to read fixture JSON")
+    Right raw ⇒
+      if length raw > 8388608 then fail (MakeProblem 6 "fixture larger than 8 MiB")
+      else case decode_document vin raw of
+        Left issue ⇒ fail issue
+        Right vehicle ⇒ print_vehicle format "supplied-fixture; not live provider evidence" Nothing vehicle
+
+run_decode : VIN → Maybe Text → OutputFormat → IO ()
+run_decode vin year_hint format = do
+  case parse_url (decode_url vin year_hint) of
+    Left _ ⇒ fail (MakeProblem 2 "could not construct vPIC HTTPS URL")
+    Right target ⇒ do
+      captured ← fetch_response (get target) []
+      case captured of
+        Left reason ⇒ fail (MakeProblem 5 ("ICU transport failed: " ++ reason))
+        Right response ⇒
+          if response.status ≟ 429 then fail (MakeProblem 8 "vPIC rate limit (HTTP 429)")
+          else if response.status < 200 || response.status >= 300
+               then fail (MakeProblem 4 ("vPIC HTTP status " ++ show response.status))
+          else case decode_document vin response.body of
+            Left issue ⇒ fail issue
+            Right vehicle ⇒ print_vehicle format "live-provider-response" year_hint vehicle
+
+parse_options : List Text → Either Problem (Maybe Text, OutputFormat)
+parse_options [] = Right (Nothing, Plain)
+parse_options ["--tsv"] = Right (Nothing, TSV)
+parse_options ["--modelyear", raw] = do
+  year ← validate_year raw
+  Right (Just year, Plain)
+parse_options ["--modelyear", raw, "--tsv"] = do
+  year ← validate_year raw
+  Right (Just year, TSV)
+parse_options ["--tsv", "--modelyear", raw] = do
+  year ← validate_year raw
+  Right (Just year, TSV)
+parse_options _ = Left (MakeProblem 2 usage)
+
+run_command : Text → Text → List Text → IO ()
+run_command command raw options =
+  case validate_vin raw of
+    Left issue ⇒ fail issue
+    Right vin ⇒ case parse_options options of
+      Left issue ⇒ fail issue
+      Right (year_hint, format) ⇒
+        case command of
+          "url" ⇒
+            case format of
+              TSV ⇒ fail (MakeProblem 2 "url does not accept --tsv")
+              Plain ⇒ putStrLn (decode_url vin year_hint)
+          "decode" ⇒ run_decode vin year_hint format
+          _ ⇒ fail (MakeProblem 2 usage)
+
+main : IO ()
+main = do
+  arguments ← getArgs
+  case drop 1 arguments of
+    ["--version"] ⇒ putStrLn "nhtsa-vin 0.1.0"
+    ["--help"] ⇒ putStrLn usage
+    ["help"] ⇒ putStrLn usage
+    ["fixture", raw, path] ⇒
+      case validate_vin raw of
+        Left issue ⇒ fail issue
+        Right vin ⇒ run_fixture vin path Plain
+    ["fixture", raw, path, "--tsv"] ⇒
+      case validate_vin raw of
+        Left issue ⇒ fail issue
+        Right vin ⇒ run_fixture vin path TSV
+    "url" :: raw :: rest ⇒ run_command "url" raw rest
+    "decode" :: raw :: rest ⇒ run_command "decode" raw rest
+    [raw] ⇒ run_command "decode" raw []
+    _ ⇒ fail (MakeProblem 2 usage)
