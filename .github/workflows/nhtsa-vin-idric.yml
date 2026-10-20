@@ -7,7 +7,13 @@ permissions:
   contents: read
   actions: read
 jobs:
+  qualified-ick:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Qualify and retain the exact compiler before consumer execution
+        uses: isomorphisms/ai-ci/ick-host@903b2cb27ea572c9c6cb2ffa9f39e0fbf06ec9f8
   nhtsa-vin:
+    needs: qualified-ick
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -65,12 +71,12 @@ jobs:
           CC: ${{ steps.ick.outputs.compiler }}
           CFLAGS: -fno-link-libatomic -static-libgcc
         shell: grease {0}
-        run: env PATH="$PWD/Idric/.tools/bin:$PATH" .acceptance/grease/bin/grease ci/nhtsa-vin-acceptance.grease bootstrap
+        run: env PATH="${{ github.workspace }}/Idric/.tools/bin:$[ENV.PATH]" .acceptance/grease/bin/grease ci/nhtsa-vin-acceptance.grease bootstrap
       - name: Execute maintained installed, independent and provider stages
         env:
           ICK: ${{ steps.ick.outputs.compiler }}
         shell: grease {0}
-        run: env PATH="$PWD/Idric/.tools/bin:$PATH" .acceptance/grease/bin/grease ci/nhtsa-vin-acceptance.grease accept
+        run: env PATH="${{ github.workspace }}/Idric/.tools/bin:$[ENV.PATH]" .acceptance/grease/bin/grease ci/nhtsa-vin-acceptance.grease accept
       - name: Retain actual stage outputs even when the provider refuses
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -20,10 +20,11 @@ if (mode === 'bootstrap') {
   cd -- "$root/.acceptance/icu"
   "$compiler" --install icu-response.ipkg
 } elif (mode === 'accept') {
+  var ick = get(ENV, 'ICK') or ''
   var head = "$(git -C "$root" rev-parse HEAD)"
   var grease = "$root/.acceptance/grease/bin/grease"
   test -x "$compiler"
-  test -x "$ICK"
+  test -x "$ick"
   cd -- "$root/.acceptance/fp"
   ./scripts/run-pipeline nhtsa-vin-acceptance \
     --runs-root "$root/.acceptance/receipts" \
@@ -37,7 +38,7 @@ if (mode === 'bootstrap') {
     --param idric-json-head=e8b9173ab2d840ef0cf212698ea2fee97bd9e807 \
     --param "idric-net-root=$root/.acceptance/net" \
     --param idric-net-head=2f6ea92c25c9b5a7286d1ca226fa3d1e12fe303e \
-    --param "ick=$ICK" --param "ick-root=$root/.ick-host-source" \
+    --param "ick=$ick" --param "ick-root=$root/.ick-host-source" \
     --param ick-head=c61e448251744a2f40ad743ebef1a027bdcd2f9d \
     --param "kitchen-task=$root/.acceptance/kitchen/tasks/nhtsa-vin/1.grease" \
     --param "kitchen-root=$root/.acceptance/kitchen" \
