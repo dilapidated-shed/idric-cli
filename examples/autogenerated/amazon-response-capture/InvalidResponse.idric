@@ -1,0 +1,6 @@
+module Main
+
+-- Deliberately invalid provider bytes for the isolated transport fixture.
+-- This executable never contacts a network or represents a provider response.
+main : IO ()
+main = putStrLn "synthetic invalid response <diagnostic-negative>"

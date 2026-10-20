@@ -1,0 +1,112 @@
+name: Amazon.jobs Idriç acceptance
+
+on:
+  pull_request:
+  push:
+    branches: [cli]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  qualified-ick:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Qualify and retain the exact compiler before consumer execution
+        uses: isomorphisms/ai-ci/ick-host@903b2cb27ea572c9c6cb2ffa9f39e0fbf06ec9f8
+  amazon-jobs-idric:
+    needs: qualified-ick
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      ASAN_OPTIONS: detect_leaks=0
+      IDRIS2_PREFIX: ${{ github.workspace }}/Idric/_/bootstrap-build
+      IDRIS2_PATH: ${{ github.workspace }}/Idric/_/libs/contrib/build/ttc:${{ github.workspace }}/Idric/_/libs/base/build/ttc
+    steps:
+      - name: Checkout exact source head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Stage the recorded Grease host compatibility runtime
+        uses: ./.github/actions/grease-host
+
+      - name: Qualify the declared ICK compiler
+        id: ick
+        uses: isomorphisms/ai-ci/ick-host@903b2cb27ea572c9c6cb2ffa9f39e0fbf06ec9f8
+
+      - name: Checkout pinned Idriç compiler
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: isomorphisms/Idric
+          ref: a5398b6cf385a78bd203bc0499da0c5da6fb3714
+          path: Idric
+          persist-credentials: false
+
+      - name: Bootstrap the exact compiler and its contrib through Grease
+        env:
+          CC: ${{ steps.ick.outputs.compiler }}
+          CFLAGS: -fno-link-libatomic -static-libgcc
+        shell: grease {0}
+        run: env PATH="${{ github.workspace }}/Idric/_/.tools/bin:$[ENV.PATH]" .acceptance/grease/bin/grease ci/amazon-jobs-acceptance.grease bootstrap
+
+      - name: Compile and execute Amazon.jobs fixture
+        shell: grease {0}
+        run: env PATH="${{ github.workspace }}/Idric/_/.tools/bin:$[ENV.PATH]" .acceptance/grease/bin/grease ci/amazon-jobs-acceptance.grease fixtures
+
+      - name: Verify malformed-response bytes are retained and still refused
+        shell: grease {0}
+        run: env PATH="${{ github.workspace }}/Idric/_/.tools/bin:$[ENV.PATH]" .acceptance/grease/bin/grease ci/amazon-jobs-acceptance.grease diagnostics
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: isomorphisms/flexible-pipes
+          ref: 2ff26ed214f8d4c50a94a4607a506e524a114369
+          path: .acceptance/fp
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: isomorphisms/kitchen
+          ref: 6ae5e74b6976f34ebe22ec6a54110f3fae99f5ea
+          path: .acceptance/kitchen
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: isomorphisms/catfood
+          ref: b5972788d85c04cb8b75881bc0df6fbcad2939bd
+          path: .acceptance/catfood
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: isomorphisms/ai-ci
+          ref: 57c1f42ebc011e7d449b4c3f0bdd715677a2a6f5
+          path: .acceptance/aici
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: bl4ckb4ll/blackball
+          ref: dc009590fa3e0c2182cb65a4e8d431813aeccc45
+          path: .acceptance/blackball
+          sparse-checkout: FAANG/amazon/inventory/2026-09-16T155726Z/jobs.tsv
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Run maintained build, Cat Food installation, independent AICI and provider stages
+        env:
+          ICK: ${{ steps.ick.outputs.compiler }}
+        shell: grease {0}
+        run: env PATH="${{ github.workspace }}/Idric/_/.tools/bin:$[ENV.PATH]" .acceptance/grease/bin/grease ci/amazon-jobs-acceptance.grease accept
+
+      - name: Retain actual stage outputs even when the provider refuses
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: amazon-jobs-acceptance-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            .acceptance/receipts/
+            .acceptance/diagnostic/
+          include-hidden-files: true
+          if-no-files-found: warn

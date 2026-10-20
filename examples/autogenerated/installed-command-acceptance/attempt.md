@@ -50,6 +50,8 @@ replacement, approval fabrication or retirement of the PR.
 
 ## Actual hidden-root prefix failure and repair
 
+Current-head run https://github.com/dilapidated-shed/idric-cli/actions/runs/39345776319, job 118384644913, qualified the explicit ICK compiler and built the real Idriç source into stage 2, then failed: `INTERNAL ERROR: Can't find data file chez/support.ss`. The original full failed process source remains at commit 2c5ff1c7ec99653a0ef2237ec5acfd0c5b35740c; it is not a passing installed-command receipt.
+
 Current-head run https://github.com/dilapidated-shed/idric-cli/actions/runs/39345780098, job 118382267469, qualified the explicit ICK compiler and built the real Idriç source into stage 2, then failed: `INTERNAL ERROR: Can't find data file chez/support.ss`. The original full failed process source remains at commit 1d075dd28125a8fd0ad7e6328f066ae480cf30ed; it is not a passing installed-command receipt.
 
 The consumer-level IDRIS2_PREFIX pointed at the stable top-level bootstrap-build path before the actual root edric wrapper had created that symlink. That environment also overrode the bootstrap Makefile's own prefix selection. Bootstrap now removes only IDRIS2_PREFIX and IDRIS2_PATH from its child environment, matching the established successful recipe. The same source, explicit ICK CC/CFLAGS, private pinned Chez and full edric all smoke tests remain required. Once bootstrap returns, the wrapper's stable paths exist and the consumer prefix plus its own contrib are used as before. No support file is fabricated or borrowed from a stock compiler.

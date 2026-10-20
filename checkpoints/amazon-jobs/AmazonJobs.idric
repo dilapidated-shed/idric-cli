@@ -1,0 +1,552 @@
+module Main
+
+import Data.Text
+import Data.Maybe
+import Language.JSON
+import System
+import System.File
+
+-- Amazon.jobs is a public site, not a promised stable API. HTTPS fetching
+-- remains a narrow curl subprocess boundary; filtering is entirely Idriç.
+
+choice output_format one_of
+  plain_text
+  tab_separated
+  json_array
+  json_lines
+
+record SearchOptions where
+  constructor MkSearchOptions
+  query : Text
+  location : Text
+  state : Text
+  country : Text
+  category_slug : Text
+  complete_census : Bool
+  result_limit : Number
+  max_pages : Number
+  pause_seconds : Number
+  sort_order : Text
+  presentation : output_format
+  requirements : Bool
+  max_years : Maybe Number
+
+record Job where
+  constructor MkJob
+  identifier : Text
+  source_record_id : Text
+  title : Text
+  location_name : Text
+  posting_date : Text
+  category : Text
+  business_category : Text
+  team_label : Text
+  description : Text
+  basic_qualifications : Text
+  preferred_qualifications : Text
+  link : Text
+  source_record : JSON
+
+initial_options : SearchOptions
+initial_options =
+  MkSearchOptions "" "" "" "" "" False 20 100 1 "recent" plain_text False Nothing
+
+usage : Text
+usage = unlines
+  [ "usage: amazon-jobs [query] [options]"
+  , "  -l, --location TEXT    search location (for example Michigan)"
+  , "      --state TEXT       region/state"
+  , "      --country TEXT     country code (for example USA)"
+  , "      --category SLUG    category filter (example software-development)"
+  , "      --all              require complete reported search population"
+  , "  -n, --limit N          maximum matching jobs (default 20)"
+  , "      --max-pages N      maximum search pages (default 6)"
+  , "      --pause N          whole seconds between pages (default 1)"
+  , "      --sort MODE        recent or relevant"
+  , "      --format MODE      text, tsv, json, or jsonl"
+  , "      --requirements     print basic qualifications in text mode"
+  , "      --max-years N      exclude explicit basic requirements over N years"
+  , "      --self-test        run offline JSON/qualification checks"
+  , "  -h, --help             display this help"
+  ]
+
+positive_number : Text → Either Text Number
+positive_number value =
+  case parsePositive value of
+    Nothing ⇒ Left ("expected a positive whole number: " ++ value)
+    Just number ⇒ if number == 0
+      then Left ("expected a positive whole number: " ++ value)
+      else Right number
+
+nonnegative_number : Text → Either Text Number
+nonnegative_number value =
+  case parsePositive value of
+    Nothing ⇒ Left ("expected a nonnegative whole number: " ++ value)
+    Just number ⇒ Right number
+
+parse_format : Text → Either Text output_format
+parse_format "text" = Right plain_text
+parse_format "tsv" = Right tab_separated
+parse_format "json" = Right json_array
+parse_format "jsonl" = Right json_lines
+parse_format value = Left ("unknown output format: " ++ value)
+
+parse_sort : Text → Either Text Text
+parse_sort "recent" = Right "recent"
+parse_sort "relevant" = Right "relevant"
+parse_sort value = Left ("unknown sorting mode: " ++ value)
+
+parse_options : List Text → Either Text SearchOptions
+parse_options = go initial_options
+  where
+    go : SearchOptions → List Text → Either Text SearchOptions
+    go options [] =
+      if complete_census options && isJust (max_years options)
+        then Left "--all cannot be combined with --max-years; census must retain every requisition"
+        else Right options
+    go options ("-l" :: value :: rest) = go ({ location := value } options) rest
+    go options ("--location" :: value :: rest) = go ({ location := value } options) rest
+    go options ("--state" :: value :: rest) = go ({ state := value } options) rest
+    go options ("--country" :: value :: rest) = go ({ country := value } options) rest
+    go options ("--category" :: value :: rest) = go ({ category_slug := value } options) rest
+    go options ("--all" :: rest) = go ({ complete_census := True } options) rest
+    go options ("--requirements" :: rest) =
+      go ({ requirements := True } options) rest
+    go options ("-n" :: value :: rest) = do
+      amount ← positive_number value
+      go ({ result_limit := amount } options) rest
+    go options ("--limit" :: value :: rest) = do
+      amount ← positive_number value
+      go ({ result_limit := amount } options) rest
+    go options ("--max-pages" :: value :: rest) = do
+      amount ← positive_number value
+      go ({ max_pages := amount } options) rest
+    go options ("--pause" :: value :: rest) = do
+      amount ← nonnegative_number value
+      go ({ pause_seconds := amount } options) rest
+    go options ("--max-years" :: value :: rest) = do
+      amount ← nonnegative_number value
+      go ({ max_years := Just amount } options) rest
+    go options ("--sort" :: value :: rest) = do
+      selected ← parse_sort value
+      go ({ sort_order := selected } options) rest
+    go options ("--format" :: value :: rest) = do
+      selected ← parse_format value
+      go ({ presentation := selected } options) rest
+    go options (argument :: rest) =
+      if isPrefixOf "-" argument
+        then Left ("unknown option or missing value: " ++ argument)
+        else if query options ≟ ""
+          then go ({ query := argument } options) rest
+          else Left ("unexpected positional argument: " ++ argument)
+
+-- The inherited JSON library is Language.JSON (the contrib package).
+json_field : Text → JSON → Maybe JSON
+json_field key value = Language.JSON.Data.lookup key value
+
+without_trailing_dot_zero : Text → Text
+without_trailing_dot_zero value =
+  if isSuffixOf ".0" value
+    then pack (reverse (drop 2 (reverse (unpack value))))
+    else value
+
+field_text : Text → JSON → Text
+field_text key value =
+  case json_field key value of
+    Just (JString text) ⇒ text
+    Just (JNumber number) ⇒ without_trailing_dot_zero (show number)
+    Just (JBoolean True) ⇒ "true"
+    Just (JBoolean False) ⇒ "false"
+    _ ⇒ ""
+
+first_available : Text → Text → Text
+first_available first alternative =
+  if first ≟ "" then alternative else first
+
+-- Basic qualifications usually contain small HTML fragments. Removing their
+-- tags is sufficient here; this does not attempt to parse arbitrary HTML.
+html_characters : Bool → List Char → List Char
+html_characters _ [] = []
+html_characters _ ('<' :: rest) = ' ' :: html_characters True rest
+html_characters True ('>' :: rest) = html_characters False rest
+html_characters True (_ :: rest) = html_characters True rest
+html_characters False ('&' :: 'n' :: 'b' :: 's' :: 'p' :: ';' :: rest) =
+  ' ' :: html_characters False rest
+html_characters False ('&' :: 'a' :: 'm' :: 'p' :: ';' :: rest) =
+  '&' :: html_characters False rest
+html_characters False ('&' :: 'l' :: 't' :: ';' :: rest) =
+  '<' :: html_characters False rest
+html_characters False ('&' :: 'g' :: 't' :: ';' :: rest) =
+  '>' :: html_characters False rest
+html_characters False ('&' :: 'q' :: 'u' :: 'o' :: 't' :: ';' :: rest) =
+  '"' :: html_characters False rest
+html_characters False ('&' :: '#' :: '3' :: '9' :: ';' :: rest) =
+  '\'' :: html_characters False rest
+html_characters False (letter :: rest) = letter :: html_characters False rest
+
+plain_qualifications : Text → Text
+plain_qualifications markup =
+  unwords (words (pack (html_characters False (unpack markup))))
+
+-- Keep the public numeric requisition ID distinct from the search feed's
+-- source record ID. The numeric ID is encoded in /jobs/<digits>/.
+job_digits : List Char → Text
+job_digits [] = ""
+job_digits ('/' :: 'j' :: 'o' :: 'b' :: 's' :: '/' :: rest) =
+  pack (takeWhile (\character => character >= '0' && character <= '9') rest)
+job_digits (_ :: rest) = job_digits rest
+
+numeric_requisition : Text → Bool
+numeric_requisition value =
+  case unpack value of
+    [] ⇒ False
+    digits ⇒ all (\digit => digit >= '0' && digit <= '9') digits
+
+job_from_json : JSON → Job
+job_from_json raw =
+  let path = field_text "job_path" raw
+      full_link = if isPrefixOf "https://" path || isPrefixOf "http://" path
+        then path else if path ≟ "" then "" else "https://www.amazon.jobs" ++ path
+      requisition = first_available (job_digits (unpack path))
+        (first_available (field_text "job_id" raw) (field_text "id_icims" raw))
+  in MkJob
+       requisition
+       (field_text "id" raw)
+       (field_text "title" raw)
+       (first_available (field_text "normalized_location" raw)
+                        (field_text "location" raw))
+       (field_text "posted_date" raw)
+       (field_text "job_category" raw)
+       (first_available (field_text "business_category" raw)
+                        (field_text "business_categories" raw))
+       (first_available (field_text "team" raw) (field_text "team_name" raw))
+       (plain_qualifications (field_text "description" raw))
+       (plain_qualifications (field_text "basic_qualifications" raw))
+       (plain_qualifications (field_text "preferred_qualifications" raw))
+       full_link
+       raw
+
+-- Extract explicit quantities near 'year(s)' from the English basic
+-- qualifications. This is deliberately a heuristic, not a credential oracle.
+ascii_word_character : Char → Bool
+ascii_word_character character =
+  (character >= 'a' && character <= 'z') ||
+  (character >= '0' && character <= '9')
+
+finish_word : List Char → List Text → List Text
+finish_word [] found = found
+finish_word reversed_word found = pack (reverse reversed_word) :: found
+
+word_tokens : List Char → List Char → List Text → List Text
+word_tokens [] reversed_word found = reverse (finish_word reversed_word found)
+word_tokens (character :: rest) reversed_word found =
+  if ascii_word_character character
+    then word_tokens rest (character :: reversed_word) found
+    else word_tokens rest [] (finish_word reversed_word found)
+
+qualification_words : Text → List Text
+qualification_words text = word_tokens (unpack (toLower text)) [] []
+
+year_unit : Text → Bool
+year_unit word = elem word ["year", "years", "yr", "yrs"]
+
+number_exceeds : Number → Text → Bool
+number_exceeds maximum word =
+  case parsePositive word of
+    Nothing ⇒ False
+    Just amount ⇒ amount > maximum
+
+exceeds_years : Number → List Text → Bool
+exceeds_years maximum [] = False
+exceeds_years maximum (first :: "or" :: "more" :: unit :: rest) =
+  if year_unit unit && number_exceeds maximum first
+    then True else exceeds_years maximum ("or" :: "more" :: unit :: rest)
+exceeds_years maximum (first :: "to" :: upper :: unit :: rest) =
+  if year_unit unit && (number_exceeds maximum first || number_exceeds maximum upper)
+    then True else exceeds_years maximum ("to" :: upper :: unit :: rest)
+exceeds_years maximum (first :: second :: unit :: rest) =
+  if (year_unit second && number_exceeds maximum first) ||
+     (year_unit unit && (number_exceeds maximum first || number_exceeds maximum second))
+    then True else exceeds_years maximum (second :: unit :: rest)
+exceeds_years maximum (amount :: unit :: rest) =
+  if year_unit unit && number_exceeds maximum amount
+    then True else exceeds_years maximum (unit :: rest)
+exceeds_years maximum (_ :: rest) = exceeds_years maximum rest
+
+eligible : SearchOptions → Job → Bool
+eligible options job =
+  case max_years options of
+    Nothing ⇒ True
+    Just maximum ⇒
+      not (basic_qualifications job ≟ "") &&
+      not (exceeds_years maximum (qualification_words (basic_qualifications job)))
+
+jobs_in_response : Text → Either Text (List JSON, Number)
+jobs_in_response response =
+  case Language.JSON.parse response of
+    Nothing ⇒ Left "search endpoint returned invalid JSON"
+    Just parsed ⇒
+      case (json_field "jobs" parsed, json_field "hits" parsed) of
+        (Just (JArray jobs), Just (JNumber hits)) ⇒
+          case parsePositive (without_trailing_dot_zero (show hits)) of
+            Just reported_hits ⇒ Right (jobs, reported_hits)
+            Nothing ⇒ Left "invalid search hit count"
+        _ ⇒ Left "search endpoint response is missing a jobs array or hit count"
+
+page_size : SearchOptions → Number
+page_size options =
+  if complete_census options then 100 else min 50 (result_limit options)
+
+search_parameters : SearchOptions → Number → List Text
+search_parameters options offset =
+  [ "curl", "--fail", "--silent", "--show-error", "--location", "--get"
+  , "--max-time", "25"
+  , "--header", "Accept: application/json"
+  , "--header", "User-Agent: amazon-jobs-idric/1.0"
+  , "--data-urlencode", "base_query=" ++ query options
+  , "--data-urlencode", "offset=" ++ show offset
+  , "--data-urlencode", "result_limit=" ++ show (page_size options)
+  , "--data-urlencode", "sort=" ++ sort_order options
+  ] ++ (if location options ≟ "" then []
+          else ["--data-urlencode", "loc_query=" ++ location options])
+    ++ (if state options ≟ "" then []
+          else ["--data-urlencode", "region=" ++ state options])
+    ++ (if country options ≟ "" then []
+          else ["--data-urlencode", "country=" ++ country options])
+    ++ (if category_slug options ≟ "" then []
+          else ["--data-urlencode", "category[]=" ++ category_slug options])
+    ++ ["https://www.amazon.jobs/en/search.json"]
+
+-- System.run reads the complete child stdout and reports its exit status.
+-- escapeCmd makes each CLI argument one shell word, including quoted searches.
+-- Retain only a failed response when the caller supplies an evidence path.
+-- A captured response is diagnostic material, never an accepted census.
+preserve_failed_response : SearchOptions → Number → Int → Text → Text → IO Text
+preserve_failed_response options offset status response problem = do
+  destination ← getEnv "AMAZON_JOBS_FAILURE_RESPONSE"
+  case destination of
+    Nothing ⇒ pure problem
+    Just path ⇒ do
+      written ← writeFile path response
+      case written of
+        Left file_error ⇒
+          pure (problem ++ "; failed to retain response: " ++ show file_error)
+        Right () ⇒ do
+          context ← writeFile (path ++ ".request.tsv") (unlines
+            [ "curl_process_status\t" ++ show status
+            , "offset\t" ++ show offset
+            , "request\t" ++ escapeCmd (search_parameters options offset)
+            , "refusal\t" ++ problem
+            ])
+          case context of
+            Left file_error ⇒
+              pure (problem ++ "; retained response but failed to retain request: " ++ show file_error)
+            Right () ⇒ pure (problem ++ "; failed response retained at " ++ path)
+
+covering
+fetch_jobs : SearchOptions → Number → IO (Either Text (List JSON, Number))
+fetch_jobs options offset = do
+  (response, status) ← System.run (escapeCmd (search_parameters options offset))
+  if status ≟ 0
+    then case jobs_in_response response of
+      Right parsed ⇒ pure (Right parsed)
+      Left problem ⇒ do
+        retained ← preserve_failed_response options offset status response problem
+        pure (Left retained)
+    else do
+      retained ← preserve_failed_response options offset status response
+        ("HTTPS request failed (curl process status " ++ show status ++ ")")
+      pure (Left retained)
+
+choose_jobs : SearchOptions → List JSON → List Text → List Job → (List Text, List Job)
+choose_jobs options [] seen selected_reversed = (seen, selected_reversed)
+choose_jobs options (raw :: remaining) seen selected_reversed =
+  if not (complete_census options) && length selected_reversed >= result_limit options
+    then (seen, selected_reversed)
+    else let job = job_from_json raw in
+      if not (numeric_requisition (identifier job)) || elem (identifier job) seen
+        then choose_jobs options remaining seen selected_reversed
+        else let next_seen = identifier job :: seen in
+          if eligible options job
+            then choose_jobs options remaining next_seen (job :: selected_reversed)
+            else choose_jobs options remaining next_seen selected_reversed
+
+-- A complete census must observe every record counted by Amazon, with one
+-- unique numeric requisition ID per advertised vacancy. The feed can mutate
+-- during pagination; if counts change, fail rather than silently drop rows.
+complete_result : SearchOptions → Maybe Number → List Job → Number →
+                  Either Text (List Job, Number, Number)
+complete_result options expected selected_reversed scanned =
+  case expected of
+    Nothing ⇒ Left "no search hit count was observed"
+    Just hits ⇒
+      if complete_census options &&
+         not (scanned ≟ hits && length selected_reversed ≟ hits &&
+              all (\job => not (source_record_id job ≟ "")) selected_reversed &&
+              length (nub (map source_record_id selected_reversed)) ≟ hits)
+        then Left ("incomplete census: scanned=" ++ show scanned ++
+                   ", distinct=" ++ show (length selected_reversed) ++
+                   ", reported_hits=" ++ show hits)
+        else Right (reverse selected_reversed, scanned, hits)
+
+hit_count_changed : Maybe Number → Number → Bool
+hit_count_changed Nothing _ = False
+hit_count_changed (Just earlier) current = not (earlier ≟ current)
+
+covering
+collect_jobs : SearchOptions → Number → Number → Maybe Number →
+               List Text → List Job → Number →
+               IO (Either Text (List Job, Number, Number))
+collect_jobs options Z offset expected seen selected_reversed scanned =
+  pure (complete_result options expected selected_reversed scanned)
+collect_jobs options (S pages_left) offset expected seen selected_reversed scanned =
+  if not (complete_census options) &&
+     length selected_reversed >= result_limit options
+    then pure (complete_result options expected selected_reversed scanned)
+    else do
+      response ← fetch_jobs options offset
+      case response of
+        Left problem ⇒ pure (Left problem)
+        Right (batch, hits) ⇒
+          if complete_census options && hit_count_changed expected hits
+            then pure (Left "Amazon hit count changed during census")
+            else do
+              let (next_seen, next_selected) =
+                choose_jobs options batch seen selected_reversed
+              let next_scanned = scanned + length batch
+              let page_is_short = length batch < page_size options
+              let requested_limit_reached = length next_selected >= result_limit options
+              let reached_reported_hits = next_scanned >= hits
+              let finished = if complete_census options
+                               then reached_reported_hits
+                               else reached_reported_hits || page_is_short ||
+                                    requested_limit_reached
+              if finished || isNil batch
+                then pure (complete_result options (Just hits) next_selected next_scanned)
+                else do
+                  sleep (cast (pause_seconds options))
+                  collect_jobs options pages_left (offset + length batch) (Just hits)
+                               next_seen next_selected next_scanned
+
+job_json : Job → JSON
+job_json job = JObject
+  [ ("id", JString (identifier job))
+  , ("source_record_id", JString (source_record_id job))
+  , ("title", JString (title job))
+  , ("location", JString (location_name job))
+  , ("posted", JString (posting_date job))
+  , ("category", JString (category job))
+  , ("business_category", JString (business_category job))
+  , ("team", JString (team_label job))
+  , ("description", JString (description job))
+  , ("basic_qualifications", JString (basic_qualifications job))
+  , ("preferred_qualifications", JString (preferred_qualifications job))
+  , ("url", JString (link job))
+  , ("source_record", source_record job)
+  ]
+
+tsv_text : Text → Text
+tsv_text text = pack (map replace (unpack text))
+  where
+    replace : Char → Char
+    replace '\t' = ' '
+    replace '\n' = ' '
+    replace '\r' = ' '
+    replace character = character
+
+tsv_line : Job → Text
+tsv_line job = joinBy "\t" $ map tsv_text
+  [ identifier job, posting_date job, location_name job, title job
+  , business_category job, team_label job, link job, basic_qualifications job ]
+
+print_job : Bool → Job → IO ()
+print_job include_requirements job = do
+  putStrLn (title job ++ "  [" ++ identifier job ++ "]")
+  putStrLn ("  " ++ location_name job ++ " | posted " ++ posting_date job)
+  putStrLn ("  " ++ link job)
+  if include_requirements
+    then putStrLn ("  Basic qualifications: " ++ basic_qualifications job)
+    else pure ()
+  putStrLn ""
+
+print_results : SearchOptions → List Job → IO ()
+print_results options jobs =
+  case presentation options of
+    plain_text ⇒ traverse_ (print_job (requirements options)) jobs
+    tab_separated ⇒ do
+      putStrLn "id\tposted\tlocation\ttitle\tbusiness_category\tteam\turl\tbasic_qualifications"
+      traverse_ (putStrLn . tsv_line) jobs
+    json_array ⇒ putStrLn (show (JArray (map job_json jobs)))
+    json_lines ⇒ traverse_ (putStrLn . show . job_json) jobs
+
+-- A fixture that never contacts Amazon; useful for checking a compiler build.
+fixture_response : Text
+fixture_response =
+  "{\"hits\":2,\"jobs\":[" ++
+  "{\"id_icims\":123,\"id\":\"source-123\",\"title\":\"Entry level\",\"normalized_location\":\"Michigan\"," ++
+  "\"job_path\":\"/en/jobs/123\",\"business_category\":\"aws\",\"team\":\"team-sde-primary\",\"basic_qualifications\":\"<li>0 years of experience</li>\"}," ++
+  "{\"id_icims\":124,\"id\":\"source-124\",\"title\":\"Experienced\",\"normalized_location\":\"Michigan\"," ++
+  "\"job_path\":\"/en/jobs/124\",\"basic_qualifications\":\"<li>3+ years required</li>\"}]}"
+
+offline_checks : Bool
+offline_checks =
+  case jobs_in_response fixture_response of
+    Right ([first, second], 2) ⇒
+      let entry = job_from_json first
+          experienced = job_from_json second
+          screened = { max_years := Just 0 } initial_options
+          census = { complete_census := True } initial_options
+      in eligible screened entry &&
+         not (eligible screened experienced) &&
+         identifier entry ≟ "123" &&
+         link entry ≟ "https://www.amazon.jobs/en/jobs/123" &&
+         title experienced ≟ "Experienced" &&
+         identifier experienced ≟ "124" &&
+         source_record_id entry ≟ "source-123" &&
+         business_category entry ≟ "aws" &&
+         team_label entry ≟ "team-sde-primary" &&
+         numeric_requisition (identifier entry) &&
+         not (numeric_requisition "missing-id") &&
+         (case complete_result census (Just 2) [experienced, entry] 2 of
+            Right _ ⇒ True
+            Left _ ⇒ False) &&
+         (case complete_result census (Just 2) [entry, entry] 2 of
+            Left _ ⇒ True
+            Right _ ⇒ False) &&
+         exceeds_years 0 (qualification_words "2 to 4 years") &&
+         exceeds_years 0 (qualification_words "3+ years required") &&
+         exceeds_years 2 (qualification_words "3 years of experience") &&
+         not (exceeds_years 2 (qualification_words "1 year"))
+    _ ⇒ False
+
+covering
+main : IO ()
+main = do
+  arguments ← getArgs
+  let command_arguments = case arguments of
+        [] ⇒ []
+        _ :: rest ⇒ rest
+  if elem "--help" command_arguments || elem "-h" command_arguments
+    then putStrLn usage
+    else if elem "--self-test" command_arguments
+      then if offline_checks
+        then putStrLn "PASS: JSON, job normalization, and experience filtering"
+        else do
+          ignore $ fPutStrLn stderr "FAIL: offline checks"
+          exitFailure
+      else case parse_options command_arguments of
+        Left problem ⇒ do
+          ignore $ fPutStrLn stderr ("amazon-jobs: " ++ problem ++ "\n" ++ usage)
+          exitFailure
+        Right options ⇒ do
+          response ← collect_jobs options (max_pages options) 0 Nothing [] [] 0
+          case response of
+            Left problem ⇒ do
+              ignore $ fPutStrLn stderr ("amazon-jobs: " ++ problem)
+              exitFailure
+            Right (jobs, scanned, hits) ⇒ do
+              print_results options jobs
+              ignore $ fPutStrLn stderr
+                (show (length jobs) ++ " matching jobs; scanned=" ++ show scanned ++
+                 "; reported_hits=" ++ show hits ++
+                 (if complete_census options then "; COMPLETE_CENSUS" else "; PAGE_ONLY_OR_LIMITED"))

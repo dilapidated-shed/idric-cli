@@ -44,6 +44,15 @@ indeed-test:
 install-indeed:
 	"$(GREASE)" checkpoints/indeed/install.grease "$(DESTDIR)$(PREFIX)"
 
+# The Amazon.jobs product is compiled from Idriç. The build host must provide
+# the maintained Idriç compiler and its contrib JSON package.
+.PHONY: amazon-jobs amazon-jobs-test
+amazon-jobs:
+	"$(IDRIC)" -p contrib checkpoints/amazon-jobs/AmazonJobs.idric -o amazon-jobs
+
+amazon-jobs-test: amazon-jobs
+	./build/exec/amazon-jobs --self-test
+
 # NHTSA vPIC typed Idriç client; prerequisites are installed by a separately
 # source-pinned Kitchen stage, never silently fetched by make.
 NHTSA_PROGRAM ?= $(CURDIR)/build/exec/nhtsa-vin
