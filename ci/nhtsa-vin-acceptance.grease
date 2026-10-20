@@ -7,15 +7,17 @@ if (int($#) !== 1) {
   exit 2
 }
 var root = "$(git rev-parse --show-toplevel)"
-var compiler = "$root/Idric/build/exec/idris2"
+var compiler = "$root/Idric/_/build/exec/idris2"
 var mode = $1
 if (mode === 'bootstrap') {
   cd -- "$root/Idric"
-  # Bootstrap must derive its own hidden-root prefix before top-level links exist.
-  env -u IDRIS2_PREFIX -u IDRIS2_PATH JOBS=2 ./edric all
+  # Use the maintained hidden-root entrypoint; do not create untracked root links.
+  env -u IDRIS2_PREFIX -u IDRIS2_PATH JOBS=2 ./_/edric all
   make -C _/libs/contrib install IDRIS2="$compiler" \
-    IDRIS2_PREFIX="$root/Idric/bootstrap-build" \
+    IDRIS2_PREFIX="$root/Idric/_/bootstrap-build" \
     IDRIS2_PATH="$root/Idric/_/libs/contrib/build/ttc:$root/Idric/_/libs/base/build/ttc"
+  git status --short
+  git diff --exit-code
   cd -- "$root/.acceptance/net"
   "$compiler" --install idric-net.ipkg
   cd -- "$root/.acceptance/icu"
