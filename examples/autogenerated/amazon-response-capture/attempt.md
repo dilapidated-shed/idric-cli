@@ -42,3 +42,9 @@ actually landed on canonical Idriç at0e8cfdd1106ebdeffd01b6c519880ea3afc7dc35;
 VIN source9b0aeea actually landed on cli at8b6aec4ba89d2ca74bf72ed758fb5667e8453091
 after its own13-stage run39359021214 passed. These are dependency facts, not
 acceptance of this subsequent combined Amazon.jobs head.
+
+The normal two-parent integration commit is b100b8377f3381e539f8e4e3b3489dfc06436232;
+its remote root treee846f287c6353c4be14dfd5eec4b6fe38fa867a4 exactly matches the
+locally reconciled index. No branch was forced or deleted. This source-bound
+attempt note starts qualification of the real combined candidate; it does not
+transfer acceptance from either predecessor.
