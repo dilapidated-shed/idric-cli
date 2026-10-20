@@ -26,7 +26,7 @@ if (mode === 'bootstrap') {
   test -x "$compiler"
   test -x "$ick"
   cd -- "$root/.acceptance/fp"
-  ./scripts/run-pipeline nhtsa-vin-acceptance \
+  python3 ./scripts/run-pipeline nhtsa-vin-acceptance \
     --runs-root "$root/.acceptance/receipts" \
     --param "grease=$grease" \
     --param "cli-root=$root" --param "cli-head=$head" \
